@@ -1174,7 +1174,7 @@
   async function loadLive(refresh = false, silent = false) {
     const feed = document.getElementById('liveFeed');
     if (!silent) {
-      feed.innerHTML = '<div class="empty"><span class="spinner"></span> Fetching today\'s news and keeping only Contract / Project Awarded…</div>';
+      feed.innerHTML = '<div class="empty"><span class="spinner"></span> Fetching today\'s news and keeping only Contract / Project Awarded / Project Completed…</div>';
     }
     try {
       const response = await fetch(`/api/live${refresh ? '?refresh=1' : ''}`);
@@ -1381,6 +1381,8 @@
       const result = await response.json();
       if (!result.success) {
         alert(result.error);
+      } else if (result.skipped && result.message) {
+        alert(result.message);
       }
       await loadLive();
     } catch (error) {

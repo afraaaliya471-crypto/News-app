@@ -70,56 +70,7 @@ TRUSTED_PUBLISHERS = [
     "globalconstructionreview.com",
 ]
 
-# 2. The two categories the requirement asks for, and the headline
-#    phrasings that mean a story belongs in each one.
-AWARD_KEYWORDS = {
-    "Contract Awarded": [
-        # Award variations
-        "awarded", "awards", "wins", "won", "secures", "secured",
-        "clinches", "clinched", "bags", "bagged", "lands", "landed",
-        "signs", "signed", "inks", "inked",
-        
-        # Contract specific
-        "contract awarded", "awarded contract", "contract to",
-        "wins contract", "won contract", "contract win",
-        "secures contract", "secured contract",
-        "signs contract", "signed contract",
-        "inks contract", "inked contract",
-        "contract for", "contract worth",
-        
-        # EPC/Construction specific
-        "EPC contract", "construction contract", "building contract",
-        "awarded deal", "wins deal", "secures deal",
-        "contractor for", "appointed for",
-        
-        # Value mentions (strong indicator)
-        "million contract", "billion contract",
-        "$", "AED", "SAR", "Dh", "SR",
-    ],
-    "Project Awarded": [
-        # Project specific
-        "project awarded", "awards project", "project to",
-        "wins project", "won project",
-        "project for", "development project",
-        
-        # Contractor appointments
-        "appoints contractor", "appointed contractor",
-        "selects contractor", "selected contractor",
-        "contractor appointed", "contractor selected",
-        "names contractor", "named contractor",
-        "picks contractor", "picked contractor",
-        
-        # Development awards
-        "awards development", "development awarded",
-        "development contract", "awarded development",
-        
-        # Other project terms
-        "project win", "project deal",
-        "secures project", "secured project",
-    ],
-}
-
-# 3. Second gate: the story also has to actually be about construction,
+# 2. Second gate: the story also has to actually be about construction,
 #    not sports/defense/finance "winning a contract".
 CONSTRUCTION_KEYWORDS = [
     # Core construction
@@ -156,7 +107,7 @@ CONSTRUCTION_KEYWORDS = [
     "phase", "expansion", "renovation", "upgrade",
 ]
 
-# 4. Country tagging - which cities/spellings imply UAE vs Saudi Arabia.
+# 3. Country tagging - which cities/spellings imply UAE vs Saudi Arabia.
 #    Includes well-known districts/landmarks, not just city/country names,
 #    since headlines often name a place ("Palm Jumeirah") instead of
 #    saying "Dubai" or "UAE" outright. This list will never be complete -
