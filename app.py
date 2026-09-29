@@ -611,8 +611,17 @@ def api_send_next():
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc), "queue": queue_payload()}), 500
 
+    if status in _TERMINAL_SKIP_STATUSES:
+        queue = load_queue()
+        queue["items"] = [q for q in queue.get("items", []) if q.get("id") != item.get("id")]
+        save_queue(queue)
+
     if status == "already_sent":
         return jsonify({"success": True, "skipped": True, "message": "Already sent.", "queue": queue_payload(), "log": load_log(200)})
+    if status == "not_fresh":
+        return jsonify({"success": True, "skipped": True, "message": "Not posted - this article is no longer inside today's fresh window.", "queue": queue_payload(), "log": load_log(200)})
+    if status == "not_award":
+        return jsonify({"success": True, "skipped": True, "message": "Not posted - this isn't a construction award/completion.", "queue": queue_payload(), "log": load_log(200)})
 
     return jsonify({
         "success": True,

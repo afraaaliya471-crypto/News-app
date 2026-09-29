@@ -62,8 +62,14 @@ def _read_json(path, default):
 
 
 def _write_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
+    """Write via a temp file + atomic rename, so a crash mid-write can never
+    leave a truncated/corrupted file behind - _read_json() falls back to an
+    empty default on corruption, which would otherwise silently wipe out
+    permanent history (Send Log, News Log) instead of just failing loudly."""
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, path)
 
 
 def load_sent_ids():
