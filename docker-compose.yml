@@ -1,0 +1,27 @@
+# docker-compose.yml
+#
+# Runs Flask + the WhatsApp bot together in one container, via PM2 inside
+# it (ecosystem.docker.config.js), on a shared box that also runs
+# unrelated production services (gatepass).
+#
+# - Bind-mounts this whole project directory to /app, so `git pull` on the
+#   host is picked up on the next restart with no image rebuild, and all
+#   the JSON data files + the WhatsApp session persist on the host
+#   filesystem across container recreation.
+# - Publishes port 5050 to 127.0.0.1 only (loopback) - the existing tunnel
+#   process on the host reaches it there, nothing is exposed beyond that.
+# - mem_limit/cpus cap what this container can ever consume, so it can
+#   never starve the other services on this box regardless of anything
+#   that happens inside it (e.g. a long-running Chromium memory creep).
+
+services:
+  newsapp:
+    build: .
+    container_name: newsapp
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    ports:
+      - "127.0.0.1:5050:5050"
+    mem_limit: 1g
+    cpus: 1.0

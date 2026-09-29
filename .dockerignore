@@ -1,0 +1,5 @@
+node_modules
+.venv
+.whatsapp-session-data
+.git
+*.log
