@@ -80,6 +80,10 @@ client = new Client({
     }),
     puppeteer: {
         headless: true,
+        // Only set in Docker (ecosystem.docker.config.js) - undefined here
+        // lets puppeteer-core fall back to its own default resolution
+        // wherever this runs outside a container.
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',

@@ -22,6 +22,9 @@ module.exports = {
       cwd: "/app",
       env: {
         WA_SESSION_DIR: "/app/.whatsapp-session-data",
+        // puppeteer-core (whatsapp-web.js's dependency) never downloads its
+        // own browser - it must be told where the Dockerfile installed one.
+        PUPPETEER_EXECUTABLE_PATH: "/usr/bin/chromium",
       },
       autorestart: true,
       restart_delay: 3000,

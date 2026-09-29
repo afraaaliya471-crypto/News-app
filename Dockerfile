@@ -14,8 +14,15 @@ FROM node:20-bookworm-slim
 # subset that happened to come to mind first - a missing shared library here
 # fails silently as "Chromium failed to launch" with no clean fallback, so
 # better to include a few extra than to be missing one.
+#
+# `chromium` itself (the actual browser binary) is included too - whatsapp-web.js
+# depends on puppeteer-core, which unlike full "puppeteer" never downloads its
+# own browser. Without this, npm install succeeds but the bot fails at runtime
+# with "Could not find Chrome". PUPPETEER_EXECUTABLE_PATH (set in
+# ecosystem.docker.config.js) points whatsapp_selfhosted.js at this binary.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip git ca-certificates wget \
+    chromium \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
     libasound2 libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgtk-3-0 \
