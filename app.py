@@ -39,6 +39,7 @@ from store import (
     load_log,
     load_news_log,
     load_queue,
+    save_queue,
     load_sent_ids,
     load_settings,
     log_discovered,
@@ -272,10 +273,21 @@ def send_article_to_group(article):
         raise
 
 
+_TERMINAL_SKIP_STATUSES = {"not_fresh", "not_award", "already_sent"}
+
+
 def sender_tick():
     """Attempt one send from the queue if auto-send is on and possible.
     Returns the resulting status ('sent', 'already_sent', 'failed'), or
-    None if nothing was attempted this tick."""
+    None if nothing was attempted this tick.
+
+    A status in _TERMINAL_SKIP_STATUSES will never change no matter how many
+    times it's retried (e.g. an article that's aged past today's freshness
+    window stays stale forever) - leaving that item at the front of the
+    queue would permanently block every article behind it, since this only
+    ever attempts items[0]. Those are removed here so the queue can move on;
+    a genuine transient failure (exception, bot not ready) is left in place
+    to retry next tick."""
     if not load_settings().get("auto_send_enabled"):
         return None
     queue = load_queue()
@@ -284,12 +296,17 @@ def sender_tick():
         return None
     if not bot_is_ready():
         return None
+    item = items[0]
     try:
-        _entry, status = send_article_to_group(items[0])
-        return status
+        _entry, status = send_article_to_group(item)
     except Exception as exc:
         print(f"Sender: {exc}")
         return "failed"
+    if status in _TERMINAL_SKIP_STATUSES:
+        queue = load_queue()
+        queue["items"] = [q for q in queue.get("items", []) if q.get("id") != item.get("id")]
+        save_queue(queue)
+    return status
 
 
 def sender_loop():
