@@ -13,6 +13,16 @@
 # - mem_limit/cpus cap what this container can ever consume, so it can
 #   never starve the other services on this box regardless of anything
 #   that happens inside it (e.g. a long-running Chromium memory creep).
+#   2g, not a tighter cap - the box has 13GB+ free either way, and Flask +
+#   Node + headless Chromium together genuinely need real headroom; a
+#   too-tight limit risks Docker OOM-killing our own app instead of
+#   protecting anything.
+#
+# NOTE: node_modules/.venv are NOT built into the image (code is bind-
+# mounted, not copied in) - run this ONCE before the first `docker compose
+# up`, so they get installed via the container's own Node/Python and land
+# in the bind-mounted directory on the host, persisting across restarts:
+#   docker compose run --rm newsapp bash -c "npm install && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
 
 services:
   newsapp:
@@ -23,5 +33,5 @@ services:
       - .:/app
     ports:
       - "127.0.0.1:5050:5050"
-    mem_limit: 1g
+    mem_limit: 2g
     cpus: 1.0
