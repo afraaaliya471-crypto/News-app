@@ -85,6 +85,7 @@ REJECT, even if the headline mentions construction, projects, homes, or a large 
 - "plans", "eyes", "exploring", "in talks", "mulls", "proposed" with no award
 - oil, energy trading, flights, telecom, AI, software, IT, finance, defense, sports
 - CSR, accidents, appointments of CEOs that are not a construction contract
+- the SAME underlying story as one of the ALREADY-SENT headlines listed below, even when worded completely differently by a different publisher (different currency, different emphasis, a different fact from the same press release, a different number highlighted) - if it is the same client, project, and event as an already-sent headline, it is a duplicate, not a new award
 
 Examples:
 KEEP "Besix awarded AED 500m contract to build Dubai metro station" -> Contract Awarded
@@ -96,6 +97,7 @@ REJECT "Saudi economy projected to grow" -> not construction
 REJECT "Developer exploring Riyadh tower" -> no award yet
 REJECT "Fischer wins supply deal for Jeddah Tower" -> Fischer supplies materials/hardware, it is not the builder/contractor being awarded the construction scope; a materials or product supply deal is not a construction contract even when it names a real project
 REJECT "Dubai records $29.3bln in completed real estate projects in H1" -> an aggregate citywide statistic covering many unnamed projects, not one specific named project's completion
+REJECT "Burtville Developments celebrates the early handover of Ville 11" when "Burtville completes handover of 111-unit Abu Dhabi residential project" is already sent -> same handover, same developer, same project, just a different publisher's angle on the same press release
 
 Return JSON only:
 {"results":[{"i":0,"keep":true,"category":"Contract Awarded"|"Project Awarded"|"Project Completed"|null,"reason":"short reason"}]}
@@ -183,23 +185,34 @@ def _call_openai(prompt):
     return _parse_json_payload(text)
 
 
-def _judge_batch(batch):
+def _judge_batch(batch, already_sent_titles=None):
     lines = []
     for i, article in enumerate(batch):
         lines.append(f"{i}. [{article.get('source', '')}] {article.get('title', '')}")
     prompt = "Judge these headlines:\n" + "\n".join(lines)
+    if already_sent_titles:
+        sent_lines = "\n".join(f"- {title}" for title in already_sent_titles)
+        prompt += "\n\nALREADY-SENT headlines today (reject any of the above that are the same story as one of these):\n" + sent_lines
     if os.environ.get("GEMINI_API_KEY"):
         return _call_gemini(prompt)
     return _call_openai(prompt)
 
 
-def judge_award_articles(articles):
+def judge_award_articles(articles, already_sent_titles=None):
     """Judge headlines. Returns (kept_articles, evaluations).
 
     evaluations includes both kept and dropped rows so the UI can show
     how the LLM selected. Any article whose id already has a cached verdict
     (from a prior LLM judgment or a manual override) reuses that verdict
     without calling the LLM again - see VERDICT_CACHE_FILE above.
+
+    already_sent_titles, when given, lets the LLM reject a headline that's
+    the same underlying story as something already sent today even when
+    it's worded completely differently by a different publisher - a plain
+    string/word-overlap comparison (used elsewhere for cheap dedup) misses
+    exactly this case, since two publishers covering the same press release
+    often share almost no literal words; the LLM understands the meaning
+    instead of just counting shared tokens.
     """
     now = datetime.now().isoformat(timespec="seconds")
 
@@ -258,7 +271,7 @@ def judge_award_articles(articles):
     for start in range(0, len(to_judge), BATCH_SIZE):
         batch = to_judge[start:start + BATCH_SIZE]
         try:
-            results = _judge_batch(batch)
+            results = _judge_batch(batch, already_sent_titles)
         except Exception as exc:
             print(f"LLM judge failed, dropping this batch: {exc}", flush=True)
             for article in batch:

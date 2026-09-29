@@ -109,8 +109,15 @@ def run_poll_cycle():
     save_extracted(extracted)
     log_discovered(extracted)  # permanent record of every headline extracted today, kept or dropped
 
+    today = datetime.now(BUSINESS_TZ).strftime("%Y-%m-%d")
+    already_sent_titles = [
+        row.get("title", "")
+        for row in load_log(limit=None)
+        if row.get("status") == "sent" and row.get("sent_at", "").startswith(today)
+    ]
+
     to_judge = [{**item, "cat": item.get("category")} for item in extracted]
-    kept, evaluations = judge_award_articles(to_judge)
+    kept, evaluations = judge_award_articles(to_judge, already_sent_titles=already_sent_titles)
     save_llm_picks(evaluations)
     judge_failed = bool(evaluations) and all(
         str(item.get("reason", "")).startswith("LLM error") for item in evaluations
