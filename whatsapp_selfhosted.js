@@ -6,9 +6,11 @@
 // Setup:
 // 1. npm install whatsapp-web.js qrcode-terminal express
 // 2. node whatsapp_selfhosted.js
-// 3. Scan the QR code with your spare WhatsApp number
-// 4. Session saves locally in .whatsapp-session/
-// 5. In another terminal: python alerter_selfhosted.py --watch
+// 3. Scan the QR code with your spare WhatsApp number (from the terminal,
+//    or the Connect WhatsApp tab in the web dashboard)
+// 4. Session saves locally in WA_SESSION_DIR (see below)
+// 5. In another terminal: python app.py - runs the dashboard + poller +
+//    auto-sender that this bot's API serves
 
 const path = require('path');
 const os = require('os');
