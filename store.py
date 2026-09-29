@@ -39,7 +39,13 @@ def article_id(title, link):
 
 
 def now_iso():
-    return datetime.now().isoformat(timespec="seconds")
+    # Business timezone, not the host's own clock - load-bearing now that
+    # this runs on a UTC-default AWS instance instead of a UAE-based
+    # machine. A naive datetime.now() here would record every timestamp
+    # (sent_at, discovered_at, ...) 4 hours behind, and would silently break
+    # the "already sent today" duplicate check during the window where the
+    # UTC date and the UAE date disagree (see today_str() below).
+    return datetime.now(BUSINESS_TZ).isoformat(timespec="seconds")
 
 
 def today_str():

@@ -10,7 +10,12 @@ import json
 import os
 import re
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+# UAE/KSA business timezone (Asia/Dubai, UTC+4, no DST) - matches store.py's
+# BUSINESS_TZ. Not imported from store.py to avoid a circular import (store.py
+# already imports AWARD_CATEGORIES from this module).
+BUSINESS_TZ = timezone(timedelta(hours=4))
 
 import requests
 
@@ -221,7 +226,7 @@ def judge_award_articles(articles, already_sent_titles=None):
     often share almost no literal words; the LLM understands the meaning
     instead of just counting shared tokens.
     """
-    now = datetime.now().isoformat(timespec="seconds")
+    now = datetime.now(BUSINESS_TZ).isoformat(timespec="seconds")
 
     if not articles:
         return [], []
