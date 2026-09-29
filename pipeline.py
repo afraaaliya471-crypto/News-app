@@ -391,9 +391,15 @@ def finalize_articles(deduped, date_from=None, date_to=None):
             date_str = article_date.astimezone(BUSINESS_TZ).strftime("%Y-%m-%d")
             published_at = article_date.isoformat()
             if date_from and date_to:
-                search_start = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=article_date.tzinfo)
+                # BUSINESS_TZ, not article_date.tzinfo (usually UTC) - date_from/
+                # date_to are calendar-day strings computed in BUSINESS_TZ
+                # (fresh_date_range()), so the bounds have to be anchored there
+                # too, or the comparison below silently shifts by up to 4 hours
+                # at each edge. Comparing two tz-aware datetimes works correctly
+                # regardless of which tzinfo each one carries.
+                search_start = datetime.strptime(date_from, "%Y-%m-%d").replace(tzinfo=BUSINESS_TZ)
                 search_end = datetime.strptime(date_to, "%Y-%m-%d").replace(
-                    hour=23, minute=59, second=59, tzinfo=article_date.tzinfo
+                    hour=23, minute=59, second=59, tzinfo=BUSINESS_TZ
                 )
                 if article_date < search_start or article_date > search_end:
                     continue

@@ -303,6 +303,10 @@ app.post('/disconnect', async (req, res) => {
     }
 
     res.json({ success: true, message: 'Disconnected. A new QR code will appear shortly - scan it with the new number.' });
+    // A manual disconnect is a deliberate, immediate action - it should
+    // never be stuck waiting out whatever backoff delay happened to build
+    // up from unrelated prior automatic failures.
+    reinitDelayMs = 3000;
     scheduleReinit('manual disconnect');
 });
 

@@ -39,8 +39,15 @@ def _load_verdict_cache():
 
 
 def _save_verdict_cache(cache):
-    with open(VERDICT_CACHE_FILE, "w", encoding="utf-8") as f:
+    """Write via a temp file + atomic rename - this file is what makes an
+    LLM verdict stick permanently (the fix for stories flip-flopping between
+    kept/dropped across cycles). A crash mid-write here would corrupt it,
+    and the read side falls back to an empty cache on corruption, silently
+    losing every verdict and reopening exactly that flip-flopping risk."""
+    tmp_path = f"{VERDICT_CACHE_FILE}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2, ensure_ascii=False)
+    os.replace(tmp_path, VERDICT_CACHE_FILE)
 
 
 def override_verdict(article_id, keep, category, reason):
