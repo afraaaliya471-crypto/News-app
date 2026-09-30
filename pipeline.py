@@ -324,6 +324,23 @@ async def fetch_all_feeds_parallel(keyword=None, date_from=None, date_to=None):
         return results
 
 
+def _strip_source_suffix(title, publisher):
+    """Google News appends " - <outlet>" to every headline, but the exact
+    outlet text it uses for the SAME story can wobble between fetches (seen
+    in production: "- Zawya" one poll, "- zawya.com" the next). Since
+    article_id() hashes the full title, that wobble alone makes an
+    already-sent story hash to a new id and reappear as "waiting" - source
+    is already tracked as its own field, so the suffix is redundant and
+    safe to drop once it's confirmed to actually be this publisher's name."""
+    if " - " not in title:
+        return title
+    head, _, tail = title.rpartition(" - ")
+    publisher_key = publisher.lower().replace("www.", "").split(".")[0]
+    if publisher_key and publisher_key in tail.strip().lower().replace(".", ""):
+        return head
+    return title
+
+
 def dedup_articles(feed_results):
     """Keep construction + UAE/Saudi headlines, then cross-source-dedupe.
 
@@ -344,7 +361,7 @@ def dedup_articles(feed_results):
                 continue
 
             incoming = {
-                "title": a.title,
+                "title": _strip_source_suffix(a.title, publisher),
                 "link": a.link,
                 "source": publisher,
                 "cat": cat,
@@ -352,7 +369,7 @@ def dedup_articles(feed_results):
                 "published": a.get("published", ""),
             }
             match_key = next(
-                (key for key, seen in seen_articles.items() if titles_are_same_story(a.title, seen["title"])),
+                (key for key, seen in seen_articles.items() if titles_are_same_story(incoming["title"], seen["title"])),
                 None,
             )
             if match_key:
