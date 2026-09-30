@@ -267,10 +267,15 @@ app.post('/resolve-link', async (req, res) => {
     let page;
     try {
         page = await client.pupBrowser.newPage();
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 8000 });
+        // Google News's redirect is a client-side JS redirect, not an HTTP
+        // one - 'domcontentloaded' fires before that script has necessarily
+        // run. 'networkidle2' waits for the page's own network activity to
+        // settle first, giving the redirect script room to actually execute
+        // before the URL is checked below.
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
         await page.waitForFunction(
             () => !location.href.includes('news.google.com'),
-            { timeout: 6000 }
+            { timeout: 8000 }
         ).catch(() => {});
         const finalUrl = page.url();
         res.json({ url: finalUrl.includes('news.google.com') ? url : finalUrl });
