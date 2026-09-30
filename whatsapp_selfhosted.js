@@ -256,6 +256,13 @@ app.post('/send', async (req, res) => {
 // already has open for WhatsApp itself rather than adding a second one.
 // Any failure (timeout, page error, missing browser handle) falls back to
 // the original Google link so a slow/broken resolve never blocks a send.
+//
+// On a server whose IP geolocates to the EU/EEA (e.g. this box, in AWS's
+// Stockholm region), Google inserts a GDPR cookie-consent interstitial
+// (consent.google.com) before the real redirect - confirmed live, never
+// happens from a non-EU IP. Clicking through it (an ordinary "Accept all"
+// on a cookie banner, not a bot-detection or CAPTCHA challenge) is required
+// once per fresh page/session before the real redirect proceeds.
 app.post('/resolve-link', async (req, res) => {
     const { url } = req.body;
     if (!url) {
@@ -273,12 +280,30 @@ app.post('/resolve-link', async (req, res) => {
         // settle first, giving the redirect script room to actually execute
         // before the URL is checked below.
         await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+
+        if (page.url().includes('consent.google.com')) {
+            const clicked = await page.evaluate(() => {
+                const btn = Array.from(document.querySelectorAll('button'))
+                    .find((b) => /accept all/i.test(b.innerText));
+                if (btn) { btn.click(); return true; }
+                return false;
+            });
+            if (clicked) {
+                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+            }
+        }
+
+        // Whether or not a consent click just happened, the page can still
+        // be mid-redirect (accepting consent sends it back through
+        // news.google.com for the real, now-unblocked redirect) - give that
+        // its own wait rather than reading the URL too early.
         await page.waitForFunction(
-            () => !location.href.includes('news.google.com'),
-            { timeout: 8000 }
+            () => !location.href.includes('google.com'),
+            { timeout: 10000 }
         ).catch(() => {});
+
         const finalUrl = page.url();
-        res.json({ url: finalUrl.includes('news.google.com') ? url : finalUrl });
+        res.json({ url: finalUrl.includes('google.com') ? url : finalUrl });
     } catch (err) {
         console.error('Link resolve failed, using original link:', err.message);
         res.json({ url });

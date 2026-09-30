@@ -214,10 +214,11 @@ def resolve_direct_link(bot_api_url, link):
     if not link or "news.google.com" not in link:
         return link
     try:
-        # Must exceed the JS side's own worst case (15s goto + 8s waitForFunction)
-        # or Python gives up and falls back before the browser side even gets
-        # a chance to - which defeats the fallback design, not just delays it.
-        response = requests.post(f"{bot_api_url}/resolve-link", json={"url": link}, timeout=25)
+        # Must exceed the JS side's own worst case (15s goto + 15s consent-
+        # click nav + 10s second-hop wait) or Python gives up and falls back
+        # before the browser side even gets a chance to - which defeats the
+        # fallback design, not just delays it.
+        response = requests.post(f"{bot_api_url}/resolve-link", json={"url": link}, timeout=45)
         response.raise_for_status()
         return response.json().get("url") or link
     except Exception as exc:
