@@ -9,8 +9,9 @@
 # Run with:  python app.py
 # Then open: http://127.0.0.1:5050
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, Response, render_template, request, jsonify
 from datetime import datetime, timedelta
+import hmac
 import json
 import os
 import random
@@ -53,6 +54,34 @@ from store import (
 )
 
 app = Flask(__name__)
+
+
+@app.before_request
+def require_dashboard_password():
+    """Every page and /api/* route sits behind HTTP Basic auth - the public
+    tunnel URL otherwise lets anyone post to the WhatsApp group, flip
+    auto-send, or disconnect the session. Fails closed: with no
+    DASHBOARD_PASSWORD configured, nothing is served at all, rather than
+    silently serving an open dashboard."""
+    password = os.environ.get("DASHBOARD_PASSWORD", "")
+    if not password:
+        return Response("Dashboard password is not configured on the server.", 503)
+    user = os.environ.get("DASHBOARD_USER", "admin")
+
+    auth = request.authorization
+    if auth is not None:
+        user_ok = hmac.compare_digest((auth.username or "").encode(), user.encode())
+        pass_ok = hmac.compare_digest((auth.password or "").encode(), password.encode())
+        if user_ok and pass_ok:
+            return None
+        time.sleep(1)  # slows down password guessing
+
+    return Response(
+        "Authentication required.",
+        401,
+        {"WWW-Authenticate": 'Basic realm="NEWSAPP", charset="UTF-8"'},
+    )
+
 
 WHATSAPP_CONFIG_FILE = "selfhosted_config.json"
 POLL_INTERVAL_SECONDS = 5 * 60  # how often the poller checks for fresh news
