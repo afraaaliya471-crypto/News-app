@@ -9,8 +9,12 @@
 # Run with:  python app.py
 # Then open: http://127.0.0.1:5050
 
-from flask import Flask, Response, render_template, request, jsonify
+from flask import (
+    Flask, Response, jsonify, make_response, redirect, render_template,
+    request, session, url_for,
+)
 from datetime import datetime, timedelta
+import hashlib
 import hmac
 import json
 import os
@@ -55,32 +59,87 @@ from store import (
 
 app = Flask(__name__)
 
+# Login session. The signing key is derived from the dashboard password, so it
+# survives restarts (nobody gets logged out by a deploy) and changing the
+# password invalidates every existing session at once. SameSite=Lax also stops
+# other websites from triggering POSTs (post/disconnect/auto-send) with a
+# logged-in browser's cookie.
+_DASHBOARD_PASSWORD_AT_START = os.environ.get("DASHBOARD_PASSWORD", "")
+app.secret_key = (
+    hmac.new(_DASHBOARD_PASSWORD_AT_START.encode(), b"newsapp-session-key", hashlib.sha256).hexdigest()
+    if _DASHBOARD_PASSWORD_AT_START
+    else os.urandom(32).hex()
+)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=True,  # the public tunnel URL is https
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=24),
+)
+
+
+def _credentials_ok(username, password):
+    expected_user = os.environ.get("DASHBOARD_USER", "admin")
+    expected_password = os.environ.get("DASHBOARD_PASSWORD", "")
+    if not expected_password:
+        return False
+    user_ok = hmac.compare_digest((username or "").encode(), expected_user.encode())
+    pass_ok = hmac.compare_digest((password or "").encode(), expected_password.encode())
+    return user_ok and pass_ok
+
 
 @app.before_request
-def require_dashboard_password():
-    """Every page and /api/* route sits behind HTTP Basic auth - the public
-    tunnel URL otherwise lets anyone post to the WhatsApp group, flip
-    auto-send, or disconnect the session. Fails closed: with no
-    DASHBOARD_PASSWORD configured, nothing is served at all, rather than
-    silently serving an open dashboard."""
-    password = os.environ.get("DASHBOARD_PASSWORD", "")
-    if not password:
+def require_dashboard_login():
+    """Every page and /api/* route requires a login - the public tunnel URL
+    otherwise lets anyone post to the WhatsApp group, flip auto-send, or
+    disconnect the session. Fails closed: with no DASHBOARD_PASSWORD
+    configured, nothing is served at all, rather than silently serving an
+    open dashboard."""
+    if not os.environ.get("DASHBOARD_PASSWORD", ""):
         return Response("Dashboard password is not configured on the server.", 503)
-    user = os.environ.get("DASHBOARD_USER", "admin")
+    if request.endpoint == "login":
+        return None
+    if session.get("authed") is True:
+        return None
 
+    # Scripts (curl -u ...) can authenticate with a Basic header instead of
+    # the login page. No WWW-Authenticate challenge is ever sent, so browsers
+    # never show their own password popup.
     auth = request.authorization
     if auth is not None:
-        user_ok = hmac.compare_digest((auth.username or "").encode(), user.encode())
-        pass_ok = hmac.compare_digest((auth.password or "").encode(), password.encode())
-        if user_ok and pass_ok:
+        if _credentials_ok(auth.username, auth.password):
             return None
         time.sleep(1)  # slows down password guessing
 
-    return Response(
-        "Authentication required.",
-        401,
-        {"WWW-Authenticate": 'Basic realm="NEWSAPP", charset="UTF-8"'},
-    )
+    # Browser page loads go to the login page; background fetch() calls get a
+    # 401 the page's own script turns into a redirect.
+    if request.path == "/" or request.headers.get("Sec-Fetch-Mode") == "navigate":
+        return redirect(url_for("login"))
+    return jsonify({"success": False, "error": "Not logged in."}), 401
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("authed") is True:
+        return redirect(url_for("index"))
+    error = None
+    if request.method == "POST":
+        if _credentials_ok(request.form.get("username", ""), request.form.get("password", "")):
+            session.clear()
+            session["authed"] = True
+            session.permanent = True
+            return redirect(url_for("index"))
+        time.sleep(1)  # slows down password guessing
+        error = "Wrong username or password."
+    response = make_response(render_template("login.html", error=error), 401 if error else 200)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 WHATSAPP_CONFIG_FILE = "selfhosted_config.json"
