@@ -30,12 +30,15 @@ module.exports = {
       restart_delay: 3000,
       max_restarts: 20,
       // The underlying headless-browser WhatsApp Web session degrades after
-      // long continuous uptime (confirmed: froze after 22 days, stopped
-      // responding to sendMessage/getChats with CDP timeouts). A clean
-      // daily restart keeps uptime far below that threshold so the freeze
-      // can't accumulate - 2am UTC (6am Gulf time), well outside business
-      // hours. Reconnects from the saved session automatically, no QR scan.
-      cron_restart: "0 2 * * *",
+      // long continuous uptime (confirmed: froze after 22 days, then again
+      // after 9 more). A restart isn't free - briefly relaunches Chromium
+      // from scratch, and every restart is itself a small chance of a bad
+      // reconnect - so this restarts only every 3rd day, not nightly: still
+      // far below both observed freeze thresholds, with a third of the
+      // restart-events (and a third of the restart-risk) of a daily
+      // schedule. 2am UTC (6am Gulf time), well outside business hours.
+      // Reconnects from the saved session automatically, no QR scan.
+      cron_restart: "0 2 */3 * *",
     },
   ],
 };
