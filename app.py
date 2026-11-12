@@ -480,9 +480,40 @@ def poller_loop():
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
+BOT_HEALTH_CHECK_INTERVAL_SECONDS = 10 * 60  # 10 minutes
+
+
+def bot_health_loop():
+    """Probes the bot's actual page responsiveness on a fixed schedule,
+    independent of whether anything is queued to send. The reactive restart
+    in sender_tick() only notices a freeze while actively trying to send -
+    during a quiet spell with nothing queued, that path never runs, leaving
+    only the 3-day scheduled restart as a backstop. This closes that gap:
+    worst case here is ~5 checks (50 min) to detect a freeze and restart,
+    instead of up to 3 days. Shares the same failure counter/cooldown/
+    restart as send failures, so there's one self-heal mechanism to reason
+    about, not two with different thresholds."""
+    time.sleep(120)  # let the bot finish its own initial connection first
+    while True:
+        try:
+            bot_api_url = get_bot_api_url()
+            response = requests.get(f"{bot_api_url}/health-check", timeout=10)
+            healthy = bool(response.json().get("healthy"))
+        except Exception:
+            healthy = False
+        global _consecutive_send_failures
+        if healthy:
+            _consecutive_send_failures = 0
+        else:
+            print("Health check: WhatsApp page unresponsive", flush=True)
+            _note_send_failure()
+        time.sleep(BOT_HEALTH_CHECK_INTERVAL_SECONDS)
+
+
 def start_background_loops():
     threading.Thread(target=poller_loop, name="news-poller", daemon=True).start()
     threading.Thread(target=sender_loop, name="whatsapp-sender", daemon=True).start()
+    threading.Thread(target=bot_health_loop, name="whatsapp-health", daemon=True).start()
 
 
 @app.route("/", methods=["GET", "POST"])

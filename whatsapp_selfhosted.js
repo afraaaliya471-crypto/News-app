@@ -152,6 +152,32 @@ app.get('/status', (req, res) => {
     res.json({ ready: isReady });
 });
 
+// API endpoint: whether the actual WhatsApp Web page is still responsive -
+// not just whether this Node process is alive. Confirmed in production
+// twice: the page can freeze (stop responding to sendMessage/getChats)
+// while isReady stays true and this process keeps running - /status alone
+// can't see that, since it's just an in-memory flag with no browser
+// involved. This runs the same kind of page.evaluate() call that hung
+// during both incidents, so it fails the same way a real freeze does,
+// but reads only document.readyState - cheap, read-only, no side effects.
+// Not connected at all is a separate, already-handled case (scheduleReinit
+// above already retries that with backoff), so it's reported healthy here
+// rather than double-handled.
+app.get('/health-check', async (req, res) => {
+    if (!isReady || !client.pupPage) {
+        return res.json({ healthy: true, connected: false });
+    }
+    try {
+        await Promise.race([
+            client.pupPage.evaluate(() => document.readyState),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('probe timeout')), 8000))
+        ]);
+        res.json({ healthy: true, connected: true });
+    } catch (err) {
+        res.json({ healthy: false, connected: true, reason: err.message });
+    }
+});
+
 // API endpoint: current QR code image (data URL), for the web UI to display
 app.get('/qr', (req, res) => {
     res.json({ ready: isReady, qr: isReady ? null : latestQr });
