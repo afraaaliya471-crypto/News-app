@@ -22,6 +22,40 @@ LLM_PICKS_FILE = os.path.join(BASE_DIR, "llm_picks.json")
 
 DEFAULT_SETTINGS = {"auto_send_enabled": False}
 
+# Both log files are plain JSON lists rewritten in full on every entry, with
+# no database to page through - left uncapped, they grow forever and every
+# write/scan of them (log_discovered re-scans the whole history for
+# duplicates on every poll cycle) gets slower as they grow. Trimming to the
+# most recent N keeps both the file size and that scan bounded permanently.
+#
+# The send log caps "sent" and "failed" separately (not one shared cap) -
+# confirmed in production that failed entries can outnumber sent ones by
+# 10:1 after a retry storm, which would otherwise crowd out genuine send
+# history (used for duplicate-detection) long before any failure noise
+# rolls off.
+MAX_SENT_LOG_ENTRIES = 200
+MAX_FAILED_LOG_ENTRIES = 200
+MAX_NEWS_LOG_ENTRIES = 200
+
+
+def _trim_send_log(log):
+    """Keep the log newest-first, capping 'sent' and 'failed' independently
+    so one category can't push the other out."""
+    sent_kept = failed_kept = 0
+    trimmed = []
+    for entry in log:
+        status = entry.get("status")
+        if status == "sent":
+            if sent_kept >= MAX_SENT_LOG_ENTRIES:
+                continue
+            sent_kept += 1
+        elif status == "failed":
+            if failed_kept >= MAX_FAILED_LOG_ENTRIES:
+                continue
+            failed_kept += 1
+        trimmed.append(entry)
+    return trimmed
+
 # UAE/KSA business-day cutoff (Asia/Dubai, UTC+4, no DST). Monitoring now
 # runs continuously (no more fixed 8AM-5PM window), so there's no longer a
 # scheduling gap for a "yesterday after 5PM" story to fall into - every
@@ -189,6 +223,21 @@ _PUBLISHER_TOKENS = {
     "arab", "national", "reuters", "bloomberg", "constructionweek", "tradearabia",
     "argaam", "emirates", "okaz", "wam", "spa", "com",
 }
+# Generic press-release vocabulary: words almost every construction-award
+# headline in this entire system contains, regardless of which specific
+# company/project/deal it's about. Counting these as "content" is what let
+# two unrelated headlines ("Mas Engineering & Construction lands contract
+# for Riyadh mixed-use project" vs "McLaren Construction lands contract for
+# JLT mixed-use development" - different company, different city) match as
+# the same story on >50% word overlap, since nearly every shared word was
+# boilerplate rather than anything that actually identifies the story.
+_GENERIC_STORY_WORDS = {
+    "construction", "engineering", "contracting", "group", "holding",
+    "holdings", "company", "contract", "contracts", "deal", "deals",
+    "project", "projects", "development", "developments", "mixed", "use",
+    "awards", "awarded", "award", "wins", "win", "secures", "secure",
+    "signs", "sign", "lands", "land", "clinches", "clinch",
+}
 
 
 def _story_tokens(title):
@@ -198,7 +247,12 @@ def _story_tokens(title):
     clean = "".join(ch if ch.isalnum() else " " for ch in clean)
     tokens = []
     for word in clean.split():
-        if len(word) <= 2 or word in _TITLE_STOPWORDS or word in _PUBLISHER_TOKENS:
+        if (
+            len(word) <= 2
+            or word in _TITLE_STOPWORDS
+            or word in _PUBLISHER_TOKENS
+            or word in _GENERIC_STORY_WORDS
+        ):
             continue
         if word.isdigit():
             continue
@@ -334,7 +388,7 @@ def append_log(entry):
     with _lock:
         log = _read_json(LOG_FILE, [])
         log.insert(0, entry)
-        _write_json(LOG_FILE, log)
+        _write_json(LOG_FILE, _trim_send_log(log))
     return entry
 
 
@@ -343,7 +397,7 @@ def mark_sent(item, group_id=""):
     with _lock:
         log = _read_json(LOG_FILE, [])
         log.insert(0, entry)
-        _write_json(LOG_FILE, log)
+        _write_json(LOG_FILE, _trim_send_log(log))
         sent = set(_read_json(SENT_FILE, []))
         sent.add(entry["id"])
         _save_sent_ids_unlocked(sent)
@@ -406,7 +460,7 @@ def log_discovered(articles):
                 "date": article.get("date", ""),
                 "discovered_at": article.get("discovered_at") or now,
             })
-        _write_json(NEWS_LOG_FILE, log)
+        _write_json(NEWS_LOG_FILE, log[:MAX_NEWS_LOG_ENTRIES])
 
 
 def load_news_log(limit=200):

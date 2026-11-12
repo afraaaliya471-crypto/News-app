@@ -374,6 +374,14 @@ def send_article_to_group(article):
 
 _TERMINAL_SKIP_STATUSES = {"not_fresh", "not_award", "already_sent"}
 
+# A genuine transient failure (exception, bot not ready) is normally worth
+# retrying - a brief blip can clear itself within a minute or two. But with
+# no ceiling, a non-transient failure (e.g. the WhatsApp bot's browser
+# frozen for hours) gets retried forever: confirmed in production, one stuck
+# article was retried every ~60s for 13 hours straight, 200+ failed attempts,
+# before anyone noticed. Capping attempts turns that into a quiet give-up.
+MAX_SEND_ATTEMPTS = 5
+
 
 def sender_tick():
     """Attempt one send from the queue if auto-send is on and possible.
@@ -386,7 +394,7 @@ def sender_tick():
     queue would permanently block every article behind it, since this only
     ever attempts items[0]. Those are removed here so the queue can move on;
     a genuine transient failure (exception, bot not ready) is left in place
-    to retry next tick."""
+    to retry next tick, up to MAX_SEND_ATTEMPTS."""
     if not load_settings().get("auto_send_enabled"):
         return None
     queue = load_queue()
@@ -400,6 +408,17 @@ def sender_tick():
         _entry, status = send_article_to_group(item)
     except Exception as exc:
         print(f"Sender: {exc}")
+        queue = load_queue()
+        remaining = []
+        for q in queue.get("items", []):
+            if q.get("id") == item.get("id"):
+                q["attempts"] = q.get("attempts", 0) + 1
+                if q["attempts"] >= MAX_SEND_ATTEMPTS:
+                    print(f"Sender: giving up on '{item.get('title', '')[:60]}' after {MAX_SEND_ATTEMPTS} failed attempts")
+                    continue
+            remaining.append(q)
+        queue["items"] = remaining
+        save_queue(queue)
         return "failed"
     if status in _TERMINAL_SKIP_STATUSES:
         queue = load_queue()
@@ -495,6 +514,16 @@ def api_live():
         return jsonify({"success": False, "error": str(exc)}), 500
 
     sent_ids = load_sent_ids()
+    # Same cross-publisher duplicate check send_article_to_group() uses before
+    # actually posting - without it, a story already sent under a different
+    # publisher's headline shows "waiting" here forever (it'll never actually
+    # send, since the real send-time check rejects it as a duplicate), which
+    # looks like a contradiction when "Post" is clicked and says "Already sent".
+    sent_titles = [
+        row.get("title", "")
+        for row in load_log(limit=None)
+        if row.get("status") == "sent"
+    ]
     articles = []
     for article in live.get("articles", []):
         aid = article.get("id") or article_id(article["title"], article["link"])
@@ -504,7 +533,10 @@ def api_live():
             continue
         if not is_fresh(article.get("published_at", "")):
             continue
-        status = "sent" if aid in sent_ids else "waiting"
+        already_sent = aid in sent_ids or any(
+            titles_are_same_story(article.get("title", ""), sent_title) for sent_title in sent_titles
+        )
+        status = "sent" if already_sent else "waiting"
         articles.append({**article, "id": aid, "status": status})
 
     return jsonify({
