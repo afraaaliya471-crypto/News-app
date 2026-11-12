@@ -19,6 +19,7 @@ import hmac
 import json
 import os
 import random
+import subprocess
 import threading
 import time
 import requests
@@ -382,6 +383,32 @@ _TERMINAL_SKIP_STATUSES = {"not_fresh", "not_award", "already_sent"}
 # before anyone noticed. Capping attempts turns that into a quiet give-up.
 MAX_SEND_ATTEMPTS = 5
 
+# Reactive self-heal: if the bot itself is the problem (not just one stale
+# article), MAX_SEND_ATTEMPTS consecutive failures across ANY items in a row
+# triggers an actual restart of the WhatsApp bot process, instead of waiting
+# for the next scheduled restart (which could be up to 3 days away). Reuses
+# the same threshold already used for giving up on a single article, so
+# there's one number to reason about, not two.
+_consecutive_send_failures = 0
+_last_auto_restart_at = 0.0
+AUTO_RESTART_COOLDOWN_SECONDS = 180  # let a just-triggered restart reconnect before considering another
+
+
+def _note_send_failure():
+    global _consecutive_send_failures, _last_auto_restart_at
+    _consecutive_send_failures += 1
+    if _consecutive_send_failures < MAX_SEND_ATTEMPTS:
+        return
+    if time.time() - _last_auto_restart_at < AUTO_RESTART_COOLDOWN_SECONDS:
+        return
+    print(f"Sender: {_consecutive_send_failures} consecutive send failures - restarting the WhatsApp bot", flush=True)
+    try:
+        subprocess.run(["pm2", "restart", "newsapp-whatsapp"], timeout=30, check=False)
+    except Exception as exc:
+        print(f"Sender: auto-restart failed: {exc}", flush=True)
+    _last_auto_restart_at = time.time()
+    _consecutive_send_failures = 0
+
 
 def sender_tick():
     """Attempt one send from the queue if auto-send is on and possible.
@@ -402,12 +429,14 @@ def sender_tick():
     if not items:
         return None
     if not bot_is_ready():
+        _note_send_failure()
         return None
     item = items[0]
     try:
         _entry, status = send_article_to_group(item)
     except Exception as exc:
         print(f"Sender: {exc}")
+        _note_send_failure()
         queue = load_queue()
         remaining = []
         for q in queue.get("items", []):
@@ -420,6 +449,9 @@ def sender_tick():
         queue["items"] = remaining
         save_queue(queue)
         return "failed"
+    if status == "sent":
+        global _consecutive_send_failures
+        _consecutive_send_failures = 0
     if status in _TERMINAL_SKIP_STATUSES:
         queue = load_queue()
         queue["items"] = [q for q in queue.get("items", []) if q.get("id") != item.get("id")]
