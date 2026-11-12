@@ -1,400 +1,120 @@
-# Construction News Monitor - UAE & Saudi Arabia
+# UAE & Saudi Construction News Monitor
 
-**Production-ready** news monitoring system for **Project Awarded** and **Contract Awarded** construction news from UAE and Saudi Arabia. Features strict LLM filtering, automated WhatsApp delivery, and comprehensive monitoring UI.
+Tracks construction-industry news across the UAE and Saudi Arabia, filters it down to genuine contract/project awards using an LLM (not just keyword matching), and posts the real ones to a WhatsApp group automatically.
 
----
+The problem this solves: a plain keyword search for "awarded" or "contract" across construction news pulls in a lot of noise — market commentary, unrelated tech deals, "exploring a deal" stories that never close. The LLM step is what filters that down to things that actually happened.
 
-## 📁 Project Structure
+## How it works
 
-```
-NEWSAPP/
-├── 📄 Core Application
-│   ├── app.py                      # Flask web server & background automation
-│   ├── pipeline.py                 # News fetching & keyword filtering
-│   ├── llm_judge.py                # LLM-based strict filtering
-│   ├── store.py                    # Data persistence layer
-│   └── sources.py                  # 38 trusted publishers + keywords
-│
-├── 📱 WhatsApp Integration
-│   ├── whatsapp_selfhosted.js      # Self-hosted bot (Node.js + Puppeteer)
-│   └── selfhosted_config.json      # Group configuration (not in git)
-│
-├── ⚙️ Configuration
-│   ├── requirements.txt            # Python dependencies
-│   ├── package.json                # Node.js dependencies
-│   ├── .env                        # API keys (not in git)
-│   └── .gitignore                  # Git ignore rules
-│
-├── 🖥️ User Interface
-│   └── templates/index.html        # Complete monitoring dashboard
-│
-└── 📊 Generated Data (not in git)
-    ├── extracted_news.json         # After keyword filter
-    ├── llm_picks.json              # LLM evaluation results
-    ├── live_news.json              # Today's approved news
-    ├── send_queue.json             # WhatsApp queue
-    ├── whatsapp_log.json           # Send history
-    ├── news_log.json               # Discovery history
-    ├── sent_whatsapp.json          # Deduplication tracker
-    └── cache/                      # Search cache (30min)
-```
+1. **Fetch** — polls Google News RSS for a fixed list of trusted publishers (`sources.py` has the exact list — UAE and Saudi dailies, construction trade press, a few regional/real-estate outlets). Runs every 5 minutes.
+2. **Keyword gate** — a cheap first pass checks for construction-related and award-related wording, and tags the country (UAE or Saudi Arabia) from city/project-name keywords.
+3. **LLM judgment** — every headline that survives the keyword gate goes to an LLM (OpenAI or Gemini), which is deliberately strict: it has to be an actual signed/awarded contract or project, for a real construction/infrastructure project, in one of the two countries. Market stats, "in talks" stories, and anything non-construction get rejected, with a stated reason you can see on the dashboard.
+4. **Cross-publisher duplicate check** — the same contract often gets reported by two or three different outlets with different headlines. Before sending, the system checks whether this is the same underlying story as something already sent today (semantically, not just matching words), so the group doesn't get the same deal twice.
+5. **Send** — approved, fresh (today's date), non-duplicate articles get queued and posted to the configured WhatsApp group automatically, paced a bit apart rather than all at once.
 
----
+Every stage is visible on the dashboard, so you can see not just what got sent, but what got rejected and why.
 
-## 🚀 Quick Start
+## The dashboard tabs
 
-### Prerequisites
-- Python 3.9+
-- Node.js 16+
-- Spare WhatsApp number (not your main account)
-- OpenAI or Gemini API key
+- **Search** — manual search across all sources, any date range.
+- **Extracted** — raw headlines that passed the keyword gate, before the LLM looks at them.
+- **LLM Picked** — every headline the LLM judged, with its keep/reject decision and reason.
+- **Live** — today's approved articles, with their current send status.
+- **News Log** — discovery history (everything ever found, sent or not).
+- **Send Log** — what was actually sent to WhatsApp, or why a send failed.
+- **Connect WhatsApp** — bot connection status, QR code for linking a number, group selection.
 
-### 1. Install Dependencies
+## Running it
 
-**Python:**
+**Dependencies:** Python 3.9+, Node.js 20+, a spare WhatsApp number (not your personal one — see the risk note below), and an OpenAI or Gemini API key.
+
 ```bash
+# Python side
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\activate          # .venv/bin/activate on Linux/macOS
 pip install -r requirements.txt
-```
 
-**Node.js:**
-```bash
+# Node side
 npm install
-npx puppeteer browsers install chrome
 ```
 
-### 2. Configure API Keys
-
-Create `.env` file in project root:
-```env
-OPENAI_API_KEY=sk-proj-your-key-here
-# OR
-GEMINI_API_KEY=your-gemini-key-here
+Create a `.env` file in the project root (never committed — see `.gitignore`):
 ```
-
-### 3. Configure WhatsApp
-
-Update `selfhosted_config.json`:
-```json
-{
-  "groupId": "YOUR_GROUP_ID@g.us",
-  "botApiUrl": "http://localhost:3000"
-}
-```
-
-**How to get Group ID:**
-1. Get the WhatsApp invite link from your phone
-2. Start the bot: `node whatsapp_selfhosted.js`
-3. Use the bot's `/groups` endpoint or convert the invite link
-
-### 4. Start Services
-
-**Terminal 1 - WhatsApp Bot:**
-```bash
-node whatsapp_selfhosted.js
-# Scan QR code with your spare WhatsApp number
-# Wait for "WhatsApp bot ready!"
-```
-
-**Terminal 2 - Web App:**
-```bash
-python app.py
-# Open http://localhost:5050
-```
-
----
-
-## 🎯 How It Works
-
-### Complete News Flow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  1. FETCH FROM SOURCES (38 publishers, Google News RSS)         │
-│     ↓ Pipeline fetches in parallel (~15 seconds)                │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  2. KEYWORD FILTER (Extracted Tab)                              │
-│     • Award keywords: "awarded", "wins", "secured", etc.        │
-│     • Construction keywords: "construction", "building", etc.   │
-│     • Country keywords: "Dubai", "Riyadh", "NEOM", etc.         │
-│     → Saved to extracted_news.json                              │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  3. LLM EVALUATION (LLM Picked Tab)                             │
-│     ✓ GPT-4o-mini or Gemini judges each headline               │
-│     ✓ Strict rules:                                             │
-│       - Must be construction/infrastructure/EPC/building        │
-│       - Contract awarded/signed OR project awarded              │
-│       - UAE or Saudi Arabia                                     │
-│       - NOT tech, AI, software, IT deals                        │
-│       - NOT statistics, market commentary                       │
-│       - NOT "exploring" or "in talks"                           │
-│     → Saved to llm_picks.json with keep/drop reasons            │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  4. LIVE FEED (Live Tab)                                        │
-│     • Only LLM-approved articles                                │
-│     • Only today's date                                         │
-│     • Only "Contract Awarded" / "Project Awarded"               │
-│     → Merged into live_news.json                                │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  5. WHATSAPP QUEUE                                              │
-│     • New articles added to send_queue.json                     │
-│     • Hourly sending (1 post per hour, no spam)                 │
-│     • Double-check: LLM re-validates before sending             │
-└─────────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│  6. SEND LOG (Send Log Tab)                                     │
-│     • Complete history: sent or failed                          │
-│     • Tracking: source, title, date, status, group ID           │
-│     → Saved to whatsapp_log.json                                │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Background Automation
-
-- **Poller**: Checks for fresh news every 10 minutes
-- **Sender**: Sends 1 article per hour from the queue
-- **LLM**: Re-validates every article before sending (extra safety)
-
----
-
-## 📊 Web Interface Tabs
-
-### 1. **Search Tab**
-- Manual search across all 38 sources
-- Date range, keyword filtering
-- Live client-side search, sorting
-- Export to CSV
-- "Queue for WhatsApp" button
-
-### 2. **Extracted Tab** 🆕
-- Shows all headlines after Google News + keyword filter
-- **Before LLM judgment**
-- Helps understand what the pipeline found
-- Refresh button to re-fetch
-
-### 3. **LLM Picked Tab** 🆕
-- Shows LLM's decision for each extracted headline
-- **Keep** ✓ or **Drop** ✗ with reasons
-- Filter: Show All / Keep Only / Drop Only
-- Transparency into LLM's thinking
-
-### 4. **Live Tab**
-- Today's approved news (LLM-filtered)
-- Auto-refresh every 30 seconds
-- "Post next" button for manual send
-- Shows next scheduled send time
-- Countdown timer
-
-### 5. **News Log Tab**
-- Complete discovery history
-- All news found, sent or not
-- Date, source, category tracking
-
-### 6. **Send Log Tab**
-- WhatsApp send history
-- Status: ✓ Sent or ✗ Failed
-- Source, date, group ID
-- Error messages if failed
-
-### 7. **Connect WhatsApp Tab**
-- Bot connection status
-- Group list
-- QR code for re-linking
-
----
-
-## 🎓 Key Features
-
-### ✅ Strict LLM Filtering
-- **No false positives**: LLM eliminates unrelated news
-- **Category accuracy**: "Contract Awarded" vs "Project Awarded"
-- **Construction-only**: Rejects tech, AI, software deals
-- **Transparency**: See exactly why each article was kept/dropped
-
-### ✅ Smart Sending
-- **Hourly limit**: 1 post per hour (no spam)
-- **Double-check**: LLM re-validates before sending
-- **Date validation**: Only today's news
-- **Deduplication**: No duplicate titles or hashes
-
-### ✅ Self-Hosted WhatsApp
-- **No third-party access**: Your data stays private
-- **No API keys**: Uses WhatsApp Web automation
-- **No ban risk**: Uses spare SIM with normal pacing
-- **Session persistence**: Re-links automatically on errors
-
-### ✅ Production-Ready
-- **Clean codebase**: Unnecessary files removed
-- **Error handling**: Graceful failures, logging
-- **Thread-safe**: Locks prevent race conditions
-- **Git-ready**: Sensitive files in .gitignore
-
----
-
-## 🌐 Sources (38 Publishers)
-
-### Construction Publications
-Zawya, MEED, Construction Week Online
-
-### UAE News
-Khaleej Times, Gulf News, The National, Emirates 24/7
-
-### Saudi News
-Arab News, Saudi Gazette, Okaz, Al Riyadh
-
-### Business
-Arabian Business, Gulf Business, Trade Arabia
-
-### Official
-WAM (UAE), SPA (Saudi Arabia)
-
-**Full list in `sources.py`**
-
----
-
-## 🔧 Configuration Files
-
-### `selfhosted_config.json`
-```json
-{
-  "groupId": "120363123456789@g.us",
-  "botApiUrl": "http://localhost:3000"
-}
-```
-
-### `.env`
-```env
-OPENAI_API_KEY=sk-proj-...
+OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4o-mini
-# OR
-GEMINI_API_KEY=...
-GEMINI_MODEL=gemini-2.0-flash
 ```
+(or `GEMINI_API_KEY` / `GEMINI_MODEL` instead, if you'd rather use Gemini.)
 
-### `.gitignore`
-Automatically excludes:
-- WhatsApp session files
-- API keys (.env)
-- Generated data (JSON logs)
-- Configuration (selfhosted_config.json)
-- Cache and dependencies
-
----
-
-## 🐛 Troubleshooting
-
-### LLM Not Working
+Then run both processes:
 ```bash
-# Check API key in .env
-cat .env
-# Test manually
-curl https://api.openai.com/v1/models -H "Authorization: Bearer YOUR_KEY"
-```
-
-### WhatsApp Bot Errors
-```bash
-# Reinstall Chrome
-npx puppeteer browsers install chrome
-
-# Clear session and restart
-rm -rf .wwebjs_cache
+# Terminal 1
 node whatsapp_selfhosted.js
-```
+# scan the QR code with your spare number, or use the Connect WhatsApp tab
 
-### Flask App Not Responding
-```bash
-# Kill all Python processes
-taskkill /F /IM python.exe
-
-# Restart app
+# Terminal 2
 python app.py
+# open http://localhost:5050
 ```
 
-### No News Showing
-- **Morning/Weekend**: RSS feeds update slowly
-- **Default range**: App shows yesterday + today
-- **LLM rejection**: Check "LLM Picked" tab for reasons
+`ecosystem.config.js` is there if you'd rather run both under PM2 locally instead of two terminals (`pm2 start ecosystem.config.js`).
 
----
+## Production deployment (Docker, on a shared box)
 
-## 📝 Daily Workflow
+The live deployment runs in Docker, specifically so it can share a box with other, unrelated production systems without any risk of interfering with them. The key points:
 
-1. **Morning**: Open http://localhost:5050
-2. **Check "Live" tab**: See today's approved news
-3. **Check "LLM Picked" tab**: Review what was filtered
-4. **Check "Send Log" tab**: Verify WhatsApp posts
-5. **Manual search**: Use "Search" tab for specific queries
-6. **Monitor**: Background runs automatically
+- `Dockerfile` builds the runtime only (Node, Python, Chromium's system libraries). The actual code is bind-mounted from the host (`docker-compose.yml`), so a `git pull` on the host takes effect on the next restart without rebuilding the image.
+- The dashboard port is published to `127.0.0.1` only — never reachable from outside the box itself. External access goes through a separate tunnel (ngrok) running on the host, not through an exposed port.
+- `mem_limit`/`cpus` in `docker-compose.yml` cap what the container can ever consume, so nothing it does can starve whatever else is running on the same box.
+- `ecosystem.docker.config.js` is the PM2 config actually used inside the container — it's a different file from the local one above because the container has a few container-specific needs (the Python interpreter path, the Chromium binary path, the bot's restart schedule).
 
----
-
-## 🛡️ Security & Privacy
-
-✅ **All data stored locally** (no cloud services)  
-✅ **Self-hosted WhatsApp** (no third-party APIs)  
-✅ **Sensitive files in .gitignore** (safe for GitHub)  
-✅ **API keys in .env** (never committed)  
-✅ **Session files protected** (WhatsApp encryption)  
-
----
-
-## 📦 Dependencies
-
-### Python
-- `flask` - Web framework
-- `feedparser` - RSS parsing
-- `aiohttp` - Async HTTP
-- `requests` - HTTP client
-
-### Node.js
-- `whatsapp-web.js` - WhatsApp automation
-- `puppeteer` - Headless Chrome
-- `express` - API server
-- `qrcode-terminal` - QR display
-
----
-
-## 🎯 Production Deployment
-
-### Option 1: Local PC (Recommended for testing)
+Deploying an update:
 ```bash
-# Already running - just keep terminals open
+cd ~/NEWSAPP && git pull
+sudo docker compose up -d --build
 ```
 
-### Option 2: VPS (Ubuntu/Debian)
+One-time setup on a fresh box (before the first `docker compose up`), since the image doesn't bundle `node_modules`/the Python venv:
 ```bash
-# Install PM2 for process management
-npm install -g pm2
-
-# Create PM2 config (ecosystem.config.js)
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup
+docker compose run --rm newsapp bash -c "npm install && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
 ```
 
-### Option 3: Windows Server
+## Keeping the WhatsApp bot alive
+
+This is the part that actually needs explaining, because it took real incidents to get right. The WhatsApp bot runs a headless Chromium browser (via `whatsapp-web.js`/Puppeteer) to drive WhatsApp Web — and after enough continuous uptime, that browser page can quietly stop responding to commands while the Node process itself keeps running and still reports "ready." This happened twice in production (after 22 days uptime, then again after 9 more) before it was understood: sends would just time out, repeatedly, with no crash and no obvious error anywhere else.
+
+Three things now guard against this, layered so no single one has to be perfect:
+
+1. **Scheduled restart** — the bot process restarts every 3 days regardless (`ecosystem.docker.config.js`, `cron_restart`), which keeps it well under the uptime where this has ever been observed to happen. It reconnects from the saved session automatically — no QR rescan needed.
+2. **Reactive restart** — if 5 send attempts in a row fail, `app.py` restarts the bot process immediately rather than waiting for the schedule (`_note_send_failure`, `MAX_SEND_ATTEMPTS`).
+3. **Independent health probe** — reactive restart #2 only notices a problem while something is actually being sent. During a quiet stretch with nothing queued, nothing would ever trigger it — so there's also a standalone check every 10 minutes (`bot_health_loop`) that pokes the browser page directly, regardless of whether anything's being sent, and feeds into the same restart logic.
+
+All three share one failure counter and a 3-minute cooldown between restarts, so this can't turn into a restart loop.
+
+If you ever need to fix this by hand: `docker exec newsapp pm2 restart newsapp-whatsapp`. If that alone doesn't work and the logs show `process_singleton_posix.cc` / "profile appears to be in use," Chromium left a stale lock file behind from an unclean shutdown — clear it and retry:
 ```bash
-# Run as Windows Service using NSSM
-nssm install NewsAppFlask python app.py
-nssm install NewsAppWhatsApp node whatsapp_selfhosted.js
+docker exec newsapp pm2 stop newsapp-whatsapp
+docker exec newsapp find /app/.whatsapp-session-data -iname "Singleton*" -delete
+docker exec newsapp pm2 restart newsapp-whatsapp
 ```
 
----
+## Data files and retention
 
-## 📄 License
+Everything the app tracks lives in plain JSON files next to the code (not a database — at this scale, a database would be more infrastructure than the problem needs). Two of them are capped so they can't grow forever:
 
-Private project for internal construction news monitoring.
+- `whatsapp_log.json` (Send Log) — keeps the most recent 200 "sent" and 200 "failed" entries, tracked independently so a bad day of failures can't crowd out real send history.
+- `news_log.json` (News Log) — keeps the most recent 200 discovered articles.
 
----
+The cap lives in `store.py` (`MAX_SENT_LOG_ENTRIES`, `MAX_FAILED_LOG_ENTRIES`, `MAX_NEWS_LOG_ENTRIES`) if it ever needs adjusting.
 
-**Built for strict construction news filtering with LLM intelligence** 🏗️
+A failed send is capped at 5 retry attempts (`MAX_SEND_ATTEMPTS` in `app.py`) before the system gives up on that one article and moves on — otherwise a single stuck article can retry forever and flood the Send Log (this happened once: one article, retried every ~60 seconds for 13 hours straight, before anyone noticed).
+
+## Known risk that no code can fix
+
+This uses `whatsapp-web.js`, an unofficial library that automates WhatsApp Web — there's no official WhatsApp Business API involved. That means there's a standing, low-but-real risk that WhatsApp could restrict or log out the linked number if it looks automated. If that happens, no restart fixes it — it needs a human to open the Connect WhatsApp tab and scan a fresh QR code with a (possibly new) number. Using a spare number rather than anyone's personal one is the main mitigation; there isn't a way to eliminate the risk entirely while using this approach.
+
+## Troubleshooting
+
+- **LLM rejecting everything / "No evaluations yet"**: check `.env` has a valid API key. The LLM Picked tab shows every rejection reason — if good articles are being dropped, the prompt in `llm_judge.py` (`SYSTEM_PROMPT`) may need loosening; if bad ones are getting through, tighten it the same way.
+- **"WhatsApp bot is not ready"**: check `docker exec newsapp pm2 status` — if the process just restarted, give it 30-60 seconds to relaunch Chromium and reconnect before assuming something's wrong.
+- **Live feed stuck showing "waiting" on an article that never sends**: check the Send Log for something very similar already sent — the duplicate check (`titles_are_same_story` in `store.py`) sometimes needs a specific case added to its exclusion list if two genuinely different stories keep sharing enough generic wording to look alike.
+- **Nothing showing up at all**: normal on a quiet news day or early morning before publishers have posted much — check the Extracted tab to see if anything's even being found before assuming the pipeline is broken.
