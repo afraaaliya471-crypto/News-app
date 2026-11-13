@@ -27,6 +27,7 @@ whatsapp_log.json
 news_log.json
 extracted_news.json
 llm_picks.json
+llm_verdict_cache.json
 settings.json
 
 # Cache and config
