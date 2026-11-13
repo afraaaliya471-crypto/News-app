@@ -39,6 +39,13 @@ let client;
 let isReady = false;
 let latestQr = null; // data URL of the current QR image, or null when not needed
 let cachedGroups = null;
+// When the client is not ready, and since when - distinguishes "just started
+// reconnecting, give it a minute" from "been stuck connecting for way too
+// long". Confirmed in production: a restart can reach 'authenticated' (the
+// saved session is accepted) and then silently hang before 'ready' ever
+// fires - no error, no disconnect event, nothing scheduleReinit reacts to -
+// leaving the bot stuck indefinitely with nothing watching for exactly that.
+let notReadySince = Date.now();
 let reinitTimer = null;
 let reinitDelayMs = 3000;
 const REINIT_DELAY_MAX_MS = 5 * 60 * 1000; // cap at 5 minutes between attempts
@@ -52,6 +59,7 @@ const REINIT_DELAY_MAX_MS = 5 * 60 * 1000; // cap at 5 minutes between attempts
 function scheduleReinit(reason) {
     if (reinitTimer) return;
     isReady = false;
+    if (notReadySince === null) notReadySince = Date.now();
     cachedGroups = null;
     const delay = reinitDelayMs;
     console.log(`WhatsApp page broke (${reason}). Reconnecting in ${Math.round(delay / 1000)}s...`);
@@ -133,6 +141,7 @@ client.on('ready', () => {
     console.log(`✓ Session saved locally in ${WA_SESSION_DIR}`);
     console.log('✓ API server listening on http://localhost:3000');
     isReady = true;
+    notReadySince = null;
     latestQr = null;
     cachedGroups = null;
     reinitDelayMs = 3000; // healthy again - drop back to the fast retry for next time
@@ -152,6 +161,11 @@ app.get('/status', (req, res) => {
     res.json({ ready: isReady });
 });
 
+// How long a normal reconnect takes (confirmed: well under a minute from a
+// saved session) plus real margin - past this, "still connecting" has
+// become "stuck connecting", which otherwise has nothing watching for it.
+const NOT_READY_TOO_LONG_MS = 5 * 60 * 1000;
+
 // API endpoint: whether the actual WhatsApp Web page is still responsive -
 // not just whether this Node process is alive. Confirmed in production
 // twice: the page can freeze (stop responding to sendMessage/getChats)
@@ -160,11 +174,17 @@ app.get('/status', (req, res) => {
 // involved. This runs the same kind of page.evaluate() call that hung
 // during both incidents, so it fails the same way a real freeze does,
 // but reads only document.readyState - cheap, read-only, no side effects.
-// Not connected at all is a separate, already-handled case (scheduleReinit
-// above already retries that with backoff), so it's reported healthy here
-// rather than double-handled.
+// Not connected is usually a separate, already-handled case (scheduleReinit
+// above retries that with backoff) - UNLESS it's been stuck not-ready for
+// too long, which backoff alone doesn't fix if nothing ever errors or
+// disconnects to trigger it (confirmed in production: stuck silently
+// between 'authenticated' and 'ready', no event fired either way).
 app.get('/health-check', async (req, res) => {
     if (!isReady || !client.pupPage) {
+        const stuckTooLong = notReadySince !== null && (Date.now() - notReadySince) > NOT_READY_TOO_LONG_MS;
+        if (stuckTooLong) {
+            return res.json({ healthy: false, connected: false, reason: 'stuck not-ready too long' });
+        }
         return res.json({ healthy: true, connected: false });
     }
     try {
