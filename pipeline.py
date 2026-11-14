@@ -17,6 +17,13 @@ from store import BUSINESS_TZ, article_id, titles_are_same_story
 # Cache settings
 CACHE_DIR = "cache"
 CACHE_DURATION_MINUTES = 30  # Cache results for 30 minutes (extended from 15)
+# Each distinct search (keyword + dates + category combo) gets its own file
+# that nothing ever deleted on its own - same unbounded-growth class of bug
+# as the Send/News logs, just slower since this is driven by manual search
+# variety, not an automated poll. Capped the same way: a stale file is
+# deleted the moment it's confirmed stale (next paragraph), and this is a
+# hard backstop on total file count regardless.
+MAX_CACHE_FILES = 200
 
 
 def fetch_feed(url):
@@ -231,7 +238,11 @@ def load_from_cache(cache_key):
             print(f"Using cached results (age: {age_minutes:.1f} minutes)")
             return cache_data['results']
         else:
-            print(f"Cache expired (age: {age_minutes:.1f} minutes)")
+            print(f"Cache expired (age: {age_minutes:.1f} minutes) - deleting")
+            try:
+                os.remove(cache_file)
+            except OSError:
+                pass
             return None
     except Exception as e:
         print(f"Error loading cache: {e}")
@@ -253,8 +264,27 @@ def save_to_cache(cache_key, results):
         with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache_data, f, indent=2)
         print(f"Results cached successfully")
+        _enforce_cache_limit()
     except Exception as e:
         print(f"Error saving cache: {e}")
+
+
+def _enforce_cache_limit():
+    """Backstop in case expired files pile up faster than anyone re-requests
+    them to trigger the delete-on-read above - keeps the newest MAX_CACHE_FILES
+    and removes the rest, oldest first."""
+    try:
+        entries = [os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith('.json')]
+    except OSError:
+        return
+    if len(entries) <= MAX_CACHE_FILES:
+        return
+    entries.sort(key=lambda f: os.path.getmtime(f))
+    for f in entries[:len(entries) - MAX_CACHE_FILES]:
+        try:
+            os.remove(f)
+        except OSError:
+            pass
 
 
 def write_html_report(items, path="report.html"):
