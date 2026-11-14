@@ -6,9 +6,13 @@
 # got fixed, so a future code change can't silently un-fix one of them
 # without this failing. Run with: python -m unittest test_core -v
 
+import json
+import os
+import tempfile
 import unittest
 from unittest import mock
 
+import llm_judge
 import store
 import app as flask_app
 
@@ -69,6 +73,47 @@ class LogCapTests(unittest.TestCase):
         failed_kept = sum(1 for e in trimmed if e["status"] == "failed")
         self.assertEqual(sent_kept, store.MAX_SENT_LOG_ENTRIES)
         self.assertEqual(failed_kept, store.MAX_FAILED_LOG_ENTRIES)
+
+
+class SentIdsCapTests(unittest.TestCase):
+    """_add_sent_id_unlocked() - the fast exact-ID duplicate check
+    (sent_whatsapp.json) had no cap at all before this, growing by one
+    entry per send forever. Stored newest-first so it can be capped the
+    same way as the other logs."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._real_sent_file = store.SENT_FILE
+        store.SENT_FILE = os.path.join(self._tmpdir.name, "sent_whatsapp.json")
+
+    def tearDown(self):
+        store.SENT_FILE = self._real_sent_file
+        self._tmpdir.cleanup()
+
+    def test_caps_at_200_keeping_the_newest(self):
+        store._write_json(store.SENT_FILE, [f"id{i}" for i in range(198, -1, -1)])
+        store._add_sent_id_unlocked("new_id_200")
+        store._add_sent_id_unlocked("new_id_201")
+        with open(store.SENT_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(len(data), 200)
+        self.assertEqual(data[0], "new_id_201")
+        self.assertNotIn("id0", data)
+        self.assertIn("id1", data)
+
+
+class VerdictCacheCapTests(unittest.TestCase):
+    """_save_verdict_cache() - grew by one entry per judged article forever
+    before this, with no cap at all."""
+
+    def test_caps_at_200_keeping_the_most_recently_inserted(self):
+        cache = {f"article{i}": {"keep": True} for i in range(250)}
+        trimmed = dict(list(cache.items())[-llm_judge.MAX_VERDICT_CACHE_ENTRIES:])
+        self.assertEqual(len(trimmed), 200)
+        self.assertNotIn("article0", trimmed)
+        self.assertIn("article249", trimmed)
+        self.assertIn("article50", trimmed)
+        self.assertNotIn("article49", trimmed)
 
 
 class AutoRestartTriggerTests(unittest.TestCase):

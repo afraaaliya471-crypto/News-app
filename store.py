@@ -37,6 +37,15 @@ MAX_SENT_LOG_ENTRIES = 200
 MAX_FAILED_LOG_ENTRIES = 200
 MAX_NEWS_LOG_ENTRIES = 200
 
+# sent_whatsapp.json (the fast exact-ID duplicate check) had no cap
+# either - same unbounded-growth pattern, just slower-growing. Safe to
+# trim here: an article old enough to roll off would already fail the
+# same-day freshness check regardless, so nothing that still matters is
+# lost. (llm_verdict_cache.json gets the same treatment, capped in
+# llm_judge.py itself - it can't import this constant from here without
+# creating a circular import, since this file already imports from there.)
+MAX_SENT_IDS = 200
+
 
 def _trim_send_log(log):
     """Keep the log newest-first, capping 'sent' and 'failed' independently
@@ -117,8 +126,15 @@ def load_sent_ids():
         return set(_read_json(SENT_FILE, []))
 
 
-def _save_sent_ids_unlocked(sent_ids):
-    _write_json(SENT_FILE, sorted(sent_ids))
+def _add_sent_id_unlocked(new_id):
+    """Stored newest-first (not alphabetically sorted, which would throw
+    away the only signal of which ones are oldest) so it can be capped the
+    same way as the other logs."""
+    ids = _read_json(SENT_FILE, [])
+    if new_id in ids:
+        ids.remove(new_id)
+    ids.insert(0, new_id)
+    _write_json(SENT_FILE, ids[:MAX_SENT_IDS])
 
 
 def load_live():
@@ -398,9 +414,7 @@ def mark_sent(item, group_id=""):
         log = _read_json(LOG_FILE, [])
         log.insert(0, entry)
         _write_json(LOG_FILE, _trim_send_log(log))
-        sent = set(_read_json(SENT_FILE, []))
-        sent.add(entry["id"])
-        _save_sent_ids_unlocked(sent)
+        _add_sent_id_unlocked(entry["id"])
         queue = _read_json(QUEUE_FILE, {"last_sent_at": None, "items": []})
         queue["last_sent_at"] = entry["sent_at"]
         queue["items"] = [

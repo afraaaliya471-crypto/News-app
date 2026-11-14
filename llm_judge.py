@@ -31,6 +31,9 @@ BATCH_SIZE = 15
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VERDICT_CACHE_FILE = os.path.join(BASE_DIR, "llm_verdict_cache.json")
 _cache_lock = threading.Lock()
+# Same cap used everywhere else in this project, for the same reason: left
+# uncapped, this grows by one entry per judged article forever.
+MAX_VERDICT_CACHE_ENTRIES = 200
 
 
 def _load_verdict_cache():
@@ -48,7 +51,16 @@ def _save_verdict_cache(cache):
     LLM verdict stick permanently (the fix for stories flip-flopping between
     kept/dropped across cycles). A crash mid-write here would corrupt it,
     and the read side falls back to an empty cache on corruption, silently
-    losing every verdict and reopening exactly that flip-flopping risk."""
+    losing every verdict and reopening exactly that flip-flopping risk.
+
+    Capped the same way as the other logs - otherwise this grows by one
+    entry per judged article forever. Safe to trim here: an article old
+    enough to be dropped from this cache already fails the same-day
+    freshness check regardless of what verdict is cached for it, so
+    nothing that still matters is lost. Dict order is insertion order in
+    Python, so keeping the last N keys keeps the N most recently judged."""
+    if len(cache) > MAX_VERDICT_CACHE_ENTRIES:
+        cache = dict(list(cache.items())[-MAX_VERDICT_CACHE_ENTRIES:])
     tmp_path = f"{VERDICT_CACHE_FILE}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2, ensure_ascii=False)
