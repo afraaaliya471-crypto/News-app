@@ -199,18 +199,6 @@ def classify_country(title):
     return None
 
 
-def load_seen_ids(path="seen.json"):
-    if os.path.exists(path):
-        with open(path) as f:
-            return set(json.load(f))
-    return set()
-
-
-def save_seen_ids(seen_ids, path="seen.json"):
-    with open(path, "w") as f:
-        json.dump(list(seen_ids), f)
-
-
 def get_cache_key(keyword, date_from, date_to, category):
     """Generate a cache key based on search parameters."""
     params = f"{keyword}|{date_from}|{date_to}|{category}"
@@ -285,50 +273,6 @@ def _enforce_cache_limit():
             os.remove(f)
         except OSError:
             pass
-
-
-def write_html_report(items, path="report.html"):
-    """Write a simple, clean HTML page listing all items, grouped by category."""
-    rows_html = ""
-    for category in ["Contract Awarded", "Project Awarded"]:
-        cat_items = [i for i in items if i["category"] == category]
-        rows_html += f'<h2>{category} ({len(cat_items)})</h2>'
-        if not cat_items:
-            rows_html += "<p class='empty'>No new items this run.</p>"
-        for i in cat_items:
-            rows_html += f"""
-            <div class="item">
-                <a href="{i['link']}" target="_blank">{i['title']}</a>
-                <div class="meta">{i['country']} &middot; {i['source']}</div>
-            </div>
-            """
-
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>UAE & Saudi Construction News</title>
-<style>
-  body {{ font-family: Georgia, serif; max-width: 720px; margin: 40px auto;
-          color: #222; padding: 0 16px; }}
-  h1 {{ font-size: 22px; border-bottom: 2px solid #b5551e; padding-bottom: 8px; }}
-  h2 {{ font-size: 16px; color: #b5551e; margin-top: 28px; }}
-  .item {{ padding: 10px 0; border-bottom: 1px solid #ddd; }}
-  .item a {{ color: #222; text-decoration: none; font-size: 15px; }}
-  .item a:hover {{ text-decoration: underline; }}
-  .meta {{ color: #777; font-size: 12px; margin-top: 3px; }}
-  .empty {{ color: #999; font-style: italic; }}
-</style>
-</head>
-<body>
-<h1>UAE & Saudi Construction News — {len(items)} new item(s)</h1>
-{rows_html}
-</body>
-</html>"""
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(html)
-    print(f"Report written to {path}")
 
 
 async def fetch_all_feeds_parallel(keyword=None, date_from=None, date_to=None):
@@ -477,44 +421,3 @@ def fetch_candidates_sync(keyword=None, date_from=None, date_to=None):
         return dedup_articles(feed_results)
     finally:
         loop.close()
-
-
-def main():
-    seen_ids = load_seen_ids()
-    all_items = []
-
-    # Use asyncio for parallel fetching
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    results = loop.run_until_complete(fetch_all_feeds_parallel())
-    loop.close()
-
-    for publisher, country, articles in results:
-        print(f"Processing {publisher} ({country}): {len(articles)} articles")
-        
-        for a in articles:
-            category = classify_category(a.title)
-            article_country = classify_country(a.title)
-
-            if category is None or article_country is None:
-                continue
-
-            item_id = article_id(a.title, a.link)
-            if item_id in seen_ids:
-                continue
-
-            seen_ids.add(item_id)
-            all_items.append({
-                "title": a.title,
-                "link": a.link,
-                "category": category,
-                "country": article_country,
-                "source": publisher,
-            })
-
-    write_html_report(all_items)
-    save_seen_ids(seen_ids)
-
-
-if __name__ == "__main__":
-    main()

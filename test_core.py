@@ -49,6 +49,45 @@ class DuplicateDetectionTests(unittest.TestCase):
         self.assertFalse(store.titles_are_same_story(a, b))
 
 
+class QueuePruningTests(unittest.TestCase):
+    """enqueue_articles() - a queued item only gets removed when
+    sender_tick() actually attempts it, which never happens while
+    auto-send is off. Found during a full sweep for unbounded growth:
+    the queue could grow for as long as auto-send stayed off, since
+    nothing else ever pruned it. Now drops stale items on every call,
+    independent of the auto-send toggle."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._real_queue_file = store.QUEUE_FILE
+        self._real_sent_file = store.SENT_FILE
+        self._real_log_file = store.LOG_FILE
+        store.QUEUE_FILE = os.path.join(self._tmpdir.name, "send_queue.json")
+        store.SENT_FILE = os.path.join(self._tmpdir.name, "sent_whatsapp.json")
+        store.LOG_FILE = os.path.join(self._tmpdir.name, "whatsapp_log.json")
+
+    def tearDown(self):
+        store.QUEUE_FILE = self._real_queue_file
+        store.SENT_FILE = self._real_sent_file
+        store.LOG_FILE = self._real_log_file
+        self._tmpdir.cleanup()
+
+    def test_stale_items_pruned_regardless_of_auto_send_state(self):
+        from datetime import timedelta
+        now = store.now_iso()
+        stale_date = (store.datetime.now(store.BUSINESS_TZ) - timedelta(days=3)).isoformat()
+        store._write_json(store.QUEUE_FILE, {"last_sent_at": None, "items": [
+            {"id": "stale1", "title": "Old stale article", "published_at": stale_date},
+            {"id": "fresh1", "title": "Already-queued fresh article", "published_at": now},
+        ]})
+        store.enqueue_articles([])
+        with open(store.QUEUE_FILE, encoding="utf-8") as f:
+            queue = json.load(f)
+        ids = [item["id"] for item in queue["items"]]
+        self.assertNotIn("stale1", ids)
+        self.assertIn("fresh1", ids)
+
+
 class LogCapTests(unittest.TestCase):
     """_trim_send_log() - keeps 'sent' and 'failed' entries capped
     independently, so a bad day of failures (confirmed: one stuck article

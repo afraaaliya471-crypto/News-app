@@ -322,6 +322,17 @@ def enqueue_articles(articles):
     sent = load_sent_ids()
     with _lock:
         queue = _read_json(QUEUE_FILE, {"last_sent_at": None, "items": []})
+        # A queued item only gets removed when sender_tick() actually attempts
+        # it - which never happens while auto-send is off. Left unchecked,
+        # this poll cycle keeps adding fresh articles regardless of that
+        # toggle, so the queue can grow for as long as auto-send stays off.
+        # A stale item is never going to be sendable anyway (is_fresh() would
+        # reject it the moment it was attempted), so drop it proactively here
+        # instead of waiting for an attempt that might not come for days.
+        queue["items"] = [
+            item for item in queue.get("items", [])
+            if is_fresh(item.get("published_at", ""))
+        ]
         queued_ids = {item.get("id") for item in queue.get("items", [])}
         queued_titles = [item.get("title", "") for item in queue.get("items", [])]
         
