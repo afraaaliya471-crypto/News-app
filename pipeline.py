@@ -16,13 +16,8 @@ from store import BUSINESS_TZ, article_id, titles_are_same_story
 
 # Cache settings
 CACHE_DIR = "cache"
-CACHE_DURATION_MINUTES = 30  # Cache results for 30 minutes (extended from 15)
-# Each distinct search (keyword + dates + category combo) gets its own file
-# that nothing ever deleted on its own - same unbounded-growth class of bug
-# as the Send/News logs, just slower since this is driven by manual search
-# variety, not an automated poll. Capped the same way: a stale file is
-# deleted the moment it's confirmed stale (next paragraph), and this is a
-# hard backstop on total file count regardless.
+CACHE_DURATION_MINUTES = 30
+# One file per search combo. Cap the folder so old searches don't pile up.
 MAX_CACHE_FILES = 200
 
 
@@ -39,11 +34,7 @@ def fetch_feed(url):
 
 
 async def fetch_feed_async(session, url):
-    """Async version of fetch_feed for parallel requests.
-
-    One retry on failure - a single transient DNS/connection hiccup
-    (observed in production as 'getaddrinfo failed') would otherwise
-    silently drop that entire source's results for the whole poll cycle."""
+    """Fetch one RSS URL. Retry once — a brief DNS blip used to drop the whole source for that poll."""
     for attempt in range(2):
         try:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=12)) as response:  # Reduced from 20s to 12s
@@ -258,9 +249,7 @@ def save_to_cache(cache_key, results):
 
 
 def _enforce_cache_limit():
-    """Backstop in case expired files pile up faster than anyone re-requests
-    them to trigger the delete-on-read above - keeps the newest MAX_CACHE_FILES
-    and removes the rest, oldest first."""
+    """Keep at most MAX_CACHE_FILES, oldest first."""
     try:
         entries = [os.path.join(CACHE_DIR, f) for f in os.listdir(CACHE_DIR) if f.endswith('.json')]
     except OSError:
@@ -276,12 +265,7 @@ def _enforce_cache_limit():
 
 
 async def fetch_all_feeds_parallel(keyword=None, date_from=None, date_to=None):
-    """Fetch all feeds in parallel using async requests.
-
-    Each fetch is wrapped in asyncio.create_task so it starts running the
-    moment it's created - awaiting a bare coroutine (the previous approach)
-    runs it to completion before moving to the next one, i.e. sequentially,
-    despite the surrounding async/await syntax looking concurrent."""
+    """Fetch every publisher/country feed at the same time (create_task, not sequential await)."""
     tasks = []
 
     async with aiohttp.ClientSession() as session:
@@ -299,13 +283,7 @@ async def fetch_all_feeds_parallel(keyword=None, date_from=None, date_to=None):
 
 
 def _strip_source_suffix(title, publisher):
-    """Google News appends " - <outlet>" to every headline, but the exact
-    outlet text it uses for the SAME story can wobble between fetches (seen
-    in production: "- Zawya" one poll, "- zawya.com" the next). Since
-    article_id() hashes the full title, that wobble alone makes an
-    already-sent story hash to a new id and reappear as "waiting" - source
-    is already tracked as its own field, so the suffix is redundant and
-    safe to drop once it's confirmed to actually be this publisher's name."""
+    """Drop the Google News ' - Zawya' suffix so the same story doesn't get a new id next poll."""
     if " - " not in title:
         return title
     head, _, tail = title.rpartition(" - ")

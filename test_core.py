@@ -1,10 +1,4 @@
-# test_core.py
-#
-# Not a full test suite - this app doesn't have one, and at its size/single-
-# maintainer scale, a full suite would be more effort than the app needs.
-# This covers specifically the bugs that actually happened in production and
-# got fixed, so a future code change can't silently un-fix one of them
-# without this failing. Run with: python -m unittest test_core -v
+# Regression tests for bugs we already hit. Run: python -m unittest test_core -v
 
 import json
 import os

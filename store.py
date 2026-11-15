@@ -22,28 +22,13 @@ LLM_PICKS_FILE = os.path.join(BASE_DIR, "llm_picks.json")
 
 DEFAULT_SETTINGS = {"auto_send_enabled": False}
 
-# Both log files are plain JSON lists rewritten in full on every entry, with
-# no database to page through - left uncapped, they grow forever and every
-# write/scan of them (log_discovered re-scans the whole history for
-# duplicates on every poll cycle) gets slower as they grow. Trimming to the
-# most recent N keeps both the file size and that scan bounded permanently.
-#
-# The send log caps "sent" and "failed" separately (not one shared cap) -
-# confirmed in production that failed entries can outnumber sent ones by
-# 10:1 after a retry storm, which would otherwise crowd out genuine send
-# history (used for duplicate-detection) long before any failure noise
-# rolls off.
+# Cap JSON logs. Sent and failed are capped separately so a retry storm
+# doesn't wipe the real send history we use for duplicate checks.
 MAX_SENT_LOG_ENTRIES = 200
 MAX_FAILED_LOG_ENTRIES = 200
 MAX_NEWS_LOG_ENTRIES = 200
 
-# sent_whatsapp.json (the fast exact-ID duplicate check) had no cap
-# either - same unbounded-growth pattern, just slower-growing. Safe to
-# trim here: an article old enough to roll off would already fail the
-# same-day freshness check regardless, so nothing that still matters is
-# lost. (llm_verdict_cache.json gets the same treatment, capped in
-# llm_judge.py itself - it can't import this constant from here without
-# creating a circular import, since this file already imports from there.)
+# Old sent IDs can drop off — those stories would already fail the today check.
 MAX_SENT_IDS = 200
 
 
@@ -65,13 +50,7 @@ def _trim_send_log(log):
         trimmed.append(entry)
     return trimmed
 
-# UAE/KSA business-day cutoff (Asia/Dubai, UTC+4, no DST). Monitoring now
-# runs continuously (no more fixed 8AM-5PM window), so there's no longer a
-# scheduling gap for a "yesterday after 5PM" story to fall into - every
-# story gets caught within one ~10-minute poll cycle of being discovered.
-# "Today's news" is therefore just that, again: published today - but
-# checked properly against the article's real timestamp converted to this
-# timezone, instead of the old naive string-equality-on-date comparison.
+# Gulf time (UTC+4). "Today" is this calendar day here, not UTC midnight.
 BUSINESS_TZ = timezone(timedelta(hours=4))
 
 _lock = threading.Lock()
@@ -111,10 +90,7 @@ def _read_json(path, default):
 
 
 def _write_json(path, data):
-    """Write via a temp file + atomic rename, so a crash mid-write can never
-    leave a truncated/corrupted file behind - _read_json() falls back to an
-    empty default on corruption, which would otherwise silently wipe out
-    permanent history (Send Log, News Log) instead of just failing loudly."""
+    """Write to a temp file then rename, so a crash can't leave a half-written JSON."""
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -239,14 +215,8 @@ _PUBLISHER_TOKENS = {
     "arab", "national", "reuters", "bloomberg", "constructionweek", "tradearabia",
     "argaam", "emirates", "okaz", "wam", "spa", "com",
 }
-# Generic press-release vocabulary: words almost every construction-award
-# headline in this entire system contains, regardless of which specific
-# company/project/deal it's about. Counting these as "content" is what let
-# two unrelated headlines ("Mas Engineering & Construction lands contract
-# for Riyadh mixed-use project" vs "McLaren Construction lands contract for
-# JLT mixed-use development" - different company, different city) match as
-# the same story on >50% word overlap, since nearly every shared word was
-# boilerplate rather than anything that actually identifies the story.
+# Boilerplate that shows up in almost every award headline. Ignore these
+# when matching stories, or two different companies can look like duplicates.
 _GENERIC_STORY_WORDS = {
     "construction", "engineering", "contracting", "group", "holding",
     "holdings", "company", "contract", "contracts", "deal", "deals",

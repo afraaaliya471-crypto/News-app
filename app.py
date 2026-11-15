@@ -1,13 +1,5 @@
-# app.py
-#
-# Monitoring UI + Live tab. Manual search stays on Search.
-# A background poller watches for fresh news continuously; a background
-# sender posts anything new to WhatsApp the moment it's confirmed unique,
-# as long as the auto-send toggle is on. Manual "Post this" always works
-# as an override, toggle or no toggle.
-#
-# Run with:  python app.py
-# Then open: http://127.0.0.1:5050
+# app.py — dashboard, poller, and WhatsApp sender.
+# python app.py  then open http://127.0.0.1:5050
 
 from flask import (
     Flask, Response, jsonify, make_response, redirect, render_template,
@@ -60,11 +52,8 @@ from store import (
 
 app = Flask(__name__)
 
-# Login session. The signing key is derived from the dashboard password, so it
-# survives restarts (nobody gets logged out by a deploy) and changing the
-# password invalidates every existing session at once. SameSite=Lax also stops
-# other websites from triggering POSTs (post/disconnect/auto-send) with a
-# logged-in browser's cookie.
+# Session key follows the dashboard password so a deploy doesn't log everyone
+# out, and a password change invalidates old cookies.
 _DASHBOARD_PASSWORD_AT_START = os.environ.get("DASHBOARD_PASSWORD", "")
 app.secret_key = (
     hmac.new(_DASHBOARD_PASSWORD_AT_START.encode(), b"newsapp-session-key", hashlib.sha256).hexdigest()
@@ -375,20 +364,11 @@ def send_article_to_group(article):
 
 _TERMINAL_SKIP_STATUSES = {"not_fresh", "not_award", "already_sent"}
 
-# A genuine transient failure (exception, bot not ready) is normally worth
-# retrying - a brief blip can clear itself within a minute or two. But with
-# no ceiling, a non-transient failure (e.g. the WhatsApp bot's browser
-# frozen for hours) gets retried forever: confirmed in production, one stuck
-# article was retried every ~60s for 13 hours straight, 200+ failed attempts,
-# before anyone noticed. Capping attempts turns that into a quiet give-up.
+# Give up on one article after 5 failed sends. Without this, a stuck item
+# retried every minute overnight and filled the send log.
 MAX_SEND_ATTEMPTS = 5
 
-# Reactive self-heal: if the bot itself is the problem (not just one stale
-# article), MAX_SEND_ATTEMPTS consecutive failures across ANY items in a row
-# triggers an actual restart of the WhatsApp bot process, instead of waiting
-# for the next scheduled restart (which could be up to 3 days away). Reuses
-# the same threshold already used for giving up on a single article, so
-# there's one number to reason about, not two.
+# Same count of failures in a row restarts the WhatsApp bot (don't wait 3 days).
 _consecutive_send_failures = 0
 _last_auto_restart_at = 0.0
 AUTO_RESTART_COOLDOWN_SECONDS = 180  # let a just-triggered restart reconnect before considering another

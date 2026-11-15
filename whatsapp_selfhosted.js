@@ -167,18 +167,9 @@ app.get('/status', (req, res) => {
 const NOT_READY_TOO_LONG_MS = 5 * 60 * 1000;
 
 // API endpoint: whether the actual WhatsApp Web page is still responsive -
-// not just whether this Node process is alive. Confirmed in production
-// twice: the page can freeze (stop responding to sendMessage/getChats)
-// while isReady stays true and this process keeps running - /status alone
-// can't see that, since it's just an in-memory flag with no browser
-// involved. This runs the same kind of page.evaluate() call that hung
-// during both incidents, so it fails the same way a real freeze does,
-// but reads only document.readyState - cheap, read-only, no side effects.
-// Not connected is usually a separate, already-handled case (scheduleReinit
-// above retries that with backoff) - UNLESS it's been stuck not-ready for
-// too long, which backoff alone doesn't fix if nothing ever errors or
-// disconnects to trigger it (confirmed in production: stuck silently
-// between 'authenticated' and 'ready', no event fired either way).
+// Probe the actual Chrome page, not just the in-memory ready flag.
+// The page can freeze while Node still says ready. If it stays not-ready
+// too long, treat that as unhealthy too.
 app.get('/health-check', async (req, res) => {
     if (!isReady || !client.pupPage) {
         const stuckTooLong = notReadySince !== null && (Date.now() - notReadySince) > NOT_READY_TOO_LONG_MS;

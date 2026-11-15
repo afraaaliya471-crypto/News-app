@@ -1,10 +1,5 @@
-# llm_judge.py
-#
-# Final gate for "is this actually a construction contract/project award?"
-# Keywords in pipeline.py are a cheap net. This module is the strict judge.
-#
-# Set GEMINI_API_KEY or OPENAI_API_KEY in the environment or a local .env file.
-# If neither is set, nothing is approved. Keywords never count as an LLM pass.
+# llm_judge.py — last filter: is this a real construction award?
+# Needs GEMINI_API_KEY or OPENAI_API_KEY in .env. No key = nothing gets approved.
 
 import json
 import os
@@ -12,9 +7,7 @@ import re
 import threading
 from datetime import datetime, timedelta, timezone
 
-# UAE/KSA business timezone (Asia/Dubai, UTC+4, no DST) - matches store.py's
-# BUSINESS_TZ. Not imported from store.py to avoid a circular import (store.py
-# already imports AWARD_CATEGORIES from this module).
+# Same Gulf timezone as store.py (kept here to avoid a circular import).
 BUSINESS_TZ = timezone(timedelta(hours=4))
 
 import requests
@@ -22,17 +15,10 @@ import requests
 AWARD_CATEGORIES = ("Contract Awarded", "Project Awarded", "Project Completed")
 BATCH_SIZE = 15
 
-# Once a specific headline (by id) has been judged, that verdict is final -
-# it is never re-asked of the LLM again, so the same story can't flip-flop
-# between "kept" and "dropped" across later poll cycles just because an
-# LLM call near a borderline case landed slightly differently. A manual
-# "Approve to Live" override also writes here (see override_verdict), so a
-# human's decision sticks exactly the same way the LLM's own does.
+# Cached keep/drop by article id, including manual Approve. Don't re-ask the model.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VERDICT_CACHE_FILE = os.path.join(BASE_DIR, "llm_verdict_cache.json")
 _cache_lock = threading.Lock()
-# Same cap used everywhere else in this project, for the same reason: left
-# uncapped, this grows by one entry per judged article forever.
 MAX_VERDICT_CACHE_ENTRIES = 200
 
 
@@ -47,18 +33,7 @@ def _load_verdict_cache():
 
 
 def _save_verdict_cache(cache):
-    """Write via a temp file + atomic rename - this file is what makes an
-    LLM verdict stick permanently (the fix for stories flip-flopping between
-    kept/dropped across cycles). A crash mid-write here would corrupt it,
-    and the read side falls back to an empty cache on corruption, silently
-    losing every verdict and reopening exactly that flip-flopping risk.
-
-    Capped the same way as the other logs - otherwise this grows by one
-    entry per judged article forever. Safe to trim here: an article old
-    enough to be dropped from this cache already fails the same-day
-    freshness check regardless of what verdict is cached for it, so
-    nothing that still matters is lost. Dict order is insertion order in
-    Python, so keeping the last N keys keeps the N most recently judged."""
+    """Write the cache atomically (temp file then rename). Keep the last N entries."""
     if len(cache) > MAX_VERDICT_CACHE_ENTRIES:
         cache = dict(list(cache.items())[-MAX_VERDICT_CACHE_ENTRIES:])
     tmp_path = f"{VERDICT_CACHE_FILE}.tmp"
@@ -68,9 +43,7 @@ def _save_verdict_cache(cache):
 
 
 def override_verdict(article_id, keep, category, reason):
-    """Record a manual human decision as a permanent verdict, exactly like
-    an LLM verdict - used by the "Approve to Live" override so it sticks
-    across future poll cycles instead of being silently dropped again."""
+    """Save a manual Approve so the next poll doesn't drop it again."""
     with _cache_lock:
         cache = _load_verdict_cache()
         cache[article_id] = {"keep": bool(keep), "category": category if keep else None, "reason": reason}
@@ -225,18 +198,8 @@ def _judge_batch(batch, already_sent_titles=None):
 def judge_award_articles(articles, already_sent_titles=None):
     """Judge headlines. Returns (kept_articles, evaluations).
 
-    evaluations includes both kept and dropped rows so the UI can show
-    how the LLM selected. Any article whose id already has a cached verdict
-    (from a prior LLM judgment or a manual override) reuses that verdict
-    without calling the LLM again - see VERDICT_CACHE_FILE above.
-
-    already_sent_titles, when given, lets the LLM reject a headline that's
-    the same underlying story as something already sent today even when
-    it's worded completely differently by a different publisher - a plain
-    string/word-overlap comparison (used elsewhere for cheap dedup) misses
-    exactly this case, since two publishers covering the same press release
-    often share almost no literal words; the LLM understands the meaning
-    instead of just counting shared tokens.
+    Cached verdicts are reused. already_sent_titles lets the model drop
+    a rewrite of a story that already went out today.
     """
     now = datetime.now(BUSINESS_TZ).isoformat(timespec="seconds")
 

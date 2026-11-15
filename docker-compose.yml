@@ -1,27 +1,8 @@
-# docker-compose.yml
+# Flask + WhatsApp bot in one container (PM2). Code is bind-mounted at /app
+# so git pull on the host is enough; restart the container, no image rebuild.
+# Port 5050 is localhost only. 2g RAM cap so Chromium can't eat the box.
 #
-# Runs Flask + the WhatsApp bot together in one container, via PM2 inside
-# it (ecosystem.docker.config.js), on a shared box that also runs
-# unrelated production services (gatepass).
-#
-# - Bind-mounts this whole project directory to /app, so `git pull` on the
-#   host is picked up on the next restart with no image rebuild, and all
-#   the JSON data files + the WhatsApp session persist on the host
-#   filesystem across container recreation.
-# - Publishes port 5050 to 127.0.0.1 only (loopback) - the existing tunnel
-#   process on the host reaches it there, nothing is exposed beyond that.
-# - mem_limit/cpus cap what this container can ever consume, so it can
-#   never starve the other services on this box regardless of anything
-#   that happens inside it (e.g. a long-running Chromium memory creep).
-#   2g, not a tighter cap - the box has 13GB+ free either way, and Flask +
-#   Node + headless Chromium together genuinely need real headroom; a
-#   too-tight limit risks Docker OOM-killing our own app instead of
-#   protecting anything.
-#
-# NOTE: node_modules/.venv are NOT built into the image (code is bind-
-# mounted, not copied in) - run this ONCE before the first `docker compose
-# up`, so they get installed via the container's own Node/Python and land
-# in the bind-mounted directory on the host, persisting across restarts:
+# First run only (installs land on the host via the mount):
 #   docker compose run --rm newsapp bash -c "npm install && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
 
 services:

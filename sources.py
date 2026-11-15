@@ -9,13 +9,7 @@ To tune the pipeline later (add a publisher, add a keyword you notice
 we're missing), edit the lists/dicts below. No other file needs to change.
 """
 
-# 1. Publishers we search against, using Google News' site: operator.
-#    Confidence note: Zawya, Construction Week Online, MEED, Trade Arabia,
-#    Arabian Business, Khaleej Times, Gulf News, Arab News were verified
-#    against real sources earlier. saudigazette.com.sa, gulfbusiness.com,
-#    thenationalnews.com, spa.gov.sa, wam.ae are going off strong general
-#    knowledge but weren't individually re-checked - confirm the exact
-#    domain the first time you run this.
+# 1. Publishers we search with Google News site:
 TRUSTED_PUBLISHERS = [
     # Major Construction Industry Publications
     "zawya.com",
